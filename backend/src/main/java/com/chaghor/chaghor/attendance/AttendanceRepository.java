@@ -18,4 +18,8 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     // the input to payroll base pay: base = presentDays x daily wage.
     long countByWorkerIdAndWorkDateBetweenAndStatus(
             Long workerId, LocalDate start, LocalDate end, AttendanceStatus status);
+
+    // Every mark across a date range, for the supervisor dashboard's 7-day
+    // trend. One query for the whole window rather than seven per-day calls.
+    List<Attendance> findByWorkDateBetween(LocalDate start, LocalDate end);
 }

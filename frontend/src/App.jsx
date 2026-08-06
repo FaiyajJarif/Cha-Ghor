@@ -11,6 +11,9 @@ import Register from "./pages/Register";
 import TrackDriver from "./pages/TrackDriver";
 import Dashboard from "./pages/dashboards/Dashboard";
 import AdminLayout from "./components/admin/AdminLayout";
+import SupervisorLayout from "./components/supervisor/SupervisorLayout";
+import SupervisorDashboard from "./pages/supervisor/SupervisorDashboard";
+import SupervisorAttendance from "./pages/supervisor/SupervisorAttendance";
 import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
@@ -68,6 +71,21 @@ export default function App() {
           <Route path="complaints" element={<Complaints />} />
           <Route path="supply" element={<Supply />} />
           <Route path="settings" element={<Settings />} />
+        </Route>
+
+        {/* Supervisor console — field operations. Admins can open it too, since
+            every endpoint it uses already allows both roles and it is useful to
+            see what a supervisor sees. */}
+        <Route
+          path="/supervisor"
+          element={
+            <ProtectedRoute roles={["supervisor", "admin"]}>
+              <SupervisorLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<SupervisorDashboard />} />
+          <Route path="attendance" element={<SupervisorAttendance />} />
         </Route>
       </Routes>
     </>

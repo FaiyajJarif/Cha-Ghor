@@ -3,6 +3,8 @@ package com.chaghor.chaghor.attendance;
 import jakarta.validation.Valid;
 import com.chaghor.chaghor.attendance.dto.AttendanceBulkRequest;
 import com.chaghor.chaghor.attendance.dto.AttendanceResponse;
+import com.chaghor.chaghor.attendance.dto.AttendanceSummaryResponse;
+import com.chaghor.chaghor.attendance.dto.AttendanceTrendPoint;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,6 +28,22 @@ public class AttendanceController {
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return attendanceService.listByDate(date);
+    }
+
+    // One day's counts for the supervisor dashboard KPI card.
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public AttendanceSummaryResponse summary(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return attendanceService.summary(date);
+    }
+
+    // Per-day counts for the trend chart (default: the last 7 days).
+    @GetMapping("/trend")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<AttendanceTrendPoint> trend(@RequestParam(defaultValue = "7") int days) {
+        return attendanceService.trend(days);
     }
 
     // Save the whole sheet at once. marked_by is taken from the logged-in user.

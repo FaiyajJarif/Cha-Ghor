@@ -14,6 +14,14 @@ public record AttendanceEntryRequest(
         @NotNull(message = "Each row needs a worker")
         Long workerId,
 
-        @NotBlank(message = "Each row needs a status (present, absent or leave)")
-        String status) {
+        @NotBlank(message = "Each row needs a status (present, absent, late or leave)")
+        String status,
+
+        // Which field the worker is assigned to FOR THIS DAY.
+        //
+        // Optional, and null means "use the worker's home zone" -- which is what
+        // the service did unconditionally before. Pluckers get moved between
+        // fields day to day, and attendance.zone_id has always existed to record
+        // that; nothing was ever able to set it to anything but the default.
+        Long zoneId) {
 }

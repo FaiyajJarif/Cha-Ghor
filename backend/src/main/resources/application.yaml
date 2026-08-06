@@ -43,6 +43,14 @@ app:
   # the directory is created on first upload if it does not exist.
   uploads:
     dir: ${APP_UPLOADS_DIR:uploads}
+  # Weather for the supervisor dashboard. Open-Meteo is free and needs no API
+  # key, so a fresh clone works with no setup and there is no second secret to
+  # manage. Coordinates default to Sylhet. Set enabled=false to stop the backend
+  # making any outbound call at all -- reads then serve the last stored reading.
+  weather:
+    latitude: ${APP_WEATHER_LAT:24.8949}
+    longitude: ${APP_WEATHER_LON:91.8687}
+    enabled: ${APP_WEATHER_ENABLED:true}
   jwt:
     # Dev default is long enough for HS384. ALWAYS override with APP_JWT_SECRET in
     # staging/production, and rotate it if it ever leaks.
