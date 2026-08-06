@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.attendance;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.attendance.dto.AttendanceBulkRequest;
 import com.chaghor.chaghor.attendance.dto.AttendanceResponse;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +31,7 @@ public class AttendanceController {
     // Save the whole sheet at once. marked_by is taken from the logged-in user.
     @PostMapping("/bulk")
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
-    public List<AttendanceResponse> bulk(@RequestBody AttendanceBulkRequest req, Authentication auth) {
+    public List<AttendanceResponse> bulk(@Valid @RequestBody AttendanceBulkRequest req, Authentication auth) {
         String username = (auth != null) ? auth.getName() : null;
         return attendanceService.bulkUpsert(req, username);
     }

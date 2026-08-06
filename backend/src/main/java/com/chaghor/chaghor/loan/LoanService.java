@@ -33,15 +33,18 @@ public class LoanService {
     private final com.chaghor.chaghor.worker.WorkerRepository workerRepository;
     private final LoanRepaymentEntryRepository repaymentRepository;
     private final FinanceService financeService;
+    private final com.chaghor.chaghor.audit.AuditService auditService;
 
     public LoanService(LoanRepository repo,
                        com.chaghor.chaghor.worker.WorkerRepository workerRepository,
                        LoanRepaymentEntryRepository repaymentRepository,
-                       FinanceService financeService) {
+                       FinanceService financeService,
+                       com.chaghor.chaghor.audit.AuditService auditService) {
         this.repo = repo;
         this.workerRepository = workerRepository;
         this.repaymentRepository = repaymentRepository;
         this.financeService = financeService;
+        this.auditService = auditService;
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +132,17 @@ public class LoanService {
             financeService.postLoanDisbursement(loan.getId(), loan.getReference(),
                     loan.getWorkerName(), nz(loan.getPrincipal()), LocalDate.now());
         }
+
+        // Who approved this loan, and for how much. Recorded whether it was
+        // approved or rejected -- a refusal is worth being able to account for
+        // too, and note the AI only ever advised here.
+        auditService.recordTransition("loan", loan.getId(), "PENDING",
+                loan.getStatus().name(),
+                com.chaghor.chaghor.audit.AuditService.details(
+                        "principal", nz(loan.getPrincipal()),
+                        "workerName", loan.getWorkerName(),
+                        "reference", loan.getReference(),
+                        "decidedByHuman", true));
         return toRequest(loan);
     }
 

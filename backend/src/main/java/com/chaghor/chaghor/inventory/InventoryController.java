@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.inventory;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.inventory.dto.*;
 import com.chaghor.chaghor.security.AppUserDetails;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -40,7 +41,7 @@ public class InventoryController {
 
     @PostMapping("/items")
     @PreAuthorize("hasRole('ADMIN')")
-    public ItemResponse create(@RequestBody NewItemRequest req) {
+    public ItemResponse create(@Valid @RequestBody NewItemRequest req) {
         return service.createItem(req);
     }
 

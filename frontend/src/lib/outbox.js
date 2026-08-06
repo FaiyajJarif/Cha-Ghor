@@ -12,10 +12,13 @@
  * replayed \u2014 so nothing on the admin side enqueues yet. Wire
  * `queueOrSend(...)` into the attendance/leaf forms when those phases land.
  */
+// Same base URL as the axios client, so a queued write replays against the
+// host the app is actually talking to. See src/lib/config.js.
+import { API_BASE } from "./config";
+
 const DB_NAME = "chaghor";
 const STORE = "outbox";
 const DB_VERSION = 1;
-const API_BASE = "http://localhost:8080/api/v1";
 const SYNC_TAG = "chaghor-outbox";
 
 function openDb() {

@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.supply;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.supply.dto.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -63,7 +64,7 @@ public class SupplyController {
     // Dispatch a new shipment (admin only).
     @PostMapping("/shipments")
     @PreAuthorize("hasRole('ADMIN')")
-    public ShipmentResponse dispatch(@RequestBody DispatchShipmentRequest req) {
+    public ShipmentResponse dispatch(@Valid @RequestBody DispatchShipmentRequest req) {
         ShipmentResponse res = service.dispatch(req);
         events.boardChanged();
         return res;
@@ -73,7 +74,7 @@ public class SupplyController {
     // control, including moving a shipment back a step to fix a mistake.
     @PatchMapping("/shipments/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
-    public ShipmentResponse updateStatus(@PathVariable Long id, @RequestBody UpdateStatusRequest req) {
+    public ShipmentResponse updateStatus(@PathVariable Long id, @Valid @RequestBody UpdateStatusRequest req) {
         ShipmentResponse res = service.updateStatus(id, req);
         events.boardChanged();
         return res;
@@ -82,7 +83,7 @@ public class SupplyController {
     // Edit an existing shipment's route / haulage details after dispatch (admin only).
     @PutMapping("/shipments/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ShipmentResponse updateShipment(@PathVariable Long id, @RequestBody UpdateShipmentRequest req) {
+    public ShipmentResponse updateShipment(@PathVariable Long id, @Valid @RequestBody UpdateShipmentRequest req) {
         ShipmentResponse res = service.updateShipment(id, req);
         events.boardChanged();
         return res;
@@ -108,7 +109,7 @@ public class SupplyController {
     // Relocate the estate warehouse shown on the live map (admin only).
     @PutMapping("/warehouse")
     @PreAuthorize("hasRole('ADMIN')")
-    public WarehouseResponse updateWarehouse(@RequestBody WarehouseUpdateRequest req) {
+    public WarehouseResponse updateWarehouse(@Valid @RequestBody WarehouseUpdateRequest req) {
         WarehouseResponse res = service.updateWarehouse(req);
         events.boardChanged();
         return res;
@@ -123,7 +124,7 @@ public class SupplyController {
 
     @PostMapping("/track/{token}/location")
     public TrackResponse recordLocation(
-            @PathVariable String token, @RequestBody LocationPingRequest req) {
+            @PathVariable String token, @Valid @RequestBody LocationPingRequest req) {
         TrackResponse res = service.recordLocation(token, req);
         events.locationChanged();
         return res;

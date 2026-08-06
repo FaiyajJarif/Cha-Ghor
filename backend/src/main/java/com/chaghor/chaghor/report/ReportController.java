@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.report;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.report.dto.*;
 import com.chaghor.chaghor.security.AppUserDetails;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -49,7 +50,7 @@ public class ReportController {
     // Generate + save a report snapshot for a period (admin only).
     @PostMapping("/generate")
     @PreAuthorize("hasRole('ADMIN')")
-    public SavedReportResponse generate(@RequestBody(required = false) GenerateReportRequest req,
+    public SavedReportResponse generate(@Valid @RequestBody(required = false) GenerateReportRequest req,
                                         @AuthenticationPrincipal AppUserDetails principal) {
         Long userId = principal == null ? null : principal.getUser().getId();
         return service.generate(req, userId);

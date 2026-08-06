@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { LuBell } from "react-icons/lu";
+import { WS_BASE } from "../../lib/config";
 
 // Live notification bell in the header. It opens a WebSocket to the backend and
 // prepends any message it receives. The socket URL comes from VITE_WS_URL and
 // falls back to the local backend. If the socket can't connect, the bell still
 // works (it just shows "Offline" and no live items) and it auto-reconnects.
+// VITE_WS_URL still overrides if you need a different socket host; otherwise
+// this follows VITE_API_URL, so one variable configures the whole app.
 const WS_URL =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     import.meta.env.VITE_WS_URL) ||
-  "ws://localhost:8080/ws/notifications";
+  `${WS_BASE}/ws/notifications`;
 
 function timeAgo(ts) {
   const s = Math.max(1, Math.round((Date.now() - ts) / 1000));

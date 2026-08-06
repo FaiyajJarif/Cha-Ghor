@@ -32,6 +32,7 @@ public class WithdrawalService {
     private final com.chaghor.chaghor.sms.SmsService smsService;
     private final com.chaghor.chaghor.finance.FinanceService financeService;
     private final com.chaghor.chaghor.payroll.PayrollService payrollService;
+    private final com.chaghor.chaghor.audit.AuditService auditService;
 
     @Transactional
     public WithdrawalResponse create(NewWithdrawalRequest req) {
@@ -106,6 +107,14 @@ public class WithdrawalService {
         // Phase 3: notify the worker of the decision via the (mock) SMS module.
         // Best-effort + its own transaction, so it can never roll back the decision.
         smsService.notifyWithdrawalStatus(w.getWorkerId(), w.getAmount(), w.getStatus().name());
+
+        // A paid withdrawal moves real cash over bKash, so record who released it.
+        auditService.recordTransition("withdrawal_request", w.getId(), "pending",
+                w.getStatus().name(),
+                com.chaghor.chaghor.audit.AuditService.details(
+                        "amount", w.getAmount() == null ? BigDecimal.ZERO : w.getAmount(),
+                        "workerId", w.getWorkerId(),
+                        "method", w.getMethod().name()));
 
         return toResponse(w, null);
     }

@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.payroll;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.payroll.dto.*;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -60,7 +61,7 @@ public class PayrollController {
     // the period from attendance. Idempotent; never overwrites non-Draft rows.
     @PostMapping("/generate")
     @PreAuthorize("hasRole('ADMIN')")
-    public List<PayrollResponse> generate(@RequestBody(required = false) GenerateRequest req) {
+    public List<PayrollResponse> generate(@Valid @RequestBody(required = false) GenerateRequest req) {
         LocalDate start = req != null ? req.periodStart() : null;
         LocalDate end = req != null ? req.periodEnd() : null;
         return service.generate(start, end);
@@ -68,7 +69,7 @@ public class PayrollController {
 
     @PutMapping("/{id}/deductions")
     @PreAuthorize("hasRole('ADMIN')")
-    public PayrollResponse deductions(@PathVariable Long id, @RequestBody DeductionRequest req) {
+    public PayrollResponse deductions(@PathVariable Long id, @Valid @RequestBody DeductionRequest req) {
         return service.updateDeductions(id, req);
     }
 
@@ -98,7 +99,7 @@ public class PayrollController {
 
     @PutMapping("/config")
     @PreAuthorize("hasRole('ADMIN')")
-    public PayrollConfigResponse updateConfig(@RequestBody PayrollConfigRequest req, Authentication auth) {
+    public PayrollConfigResponse updateConfig(@Valid @RequestBody PayrollConfigRequest req, Authentication auth) {
         return service.updateConfig(req, auth != null ? auth.getName() : null);
     }
 }

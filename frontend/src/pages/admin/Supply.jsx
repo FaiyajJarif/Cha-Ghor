@@ -27,6 +27,7 @@ import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import ErrorBoundary from "../../components/ErrorBoundary";
+import { WS_BASE } from "../../lib/config";
 
 // The live map touches Leaflet (window/document) + a CSS side-effect import, so
 // it is lazy-loaded behind an ErrorBoundary. If the dependency isn't installed
@@ -409,11 +410,13 @@ function WarehouseModal({ initial, busy, error, onCancel, onSubmit }) {
 
 // Live Supply board WebSocket endpoint. Falls back to the local backend; can be
 // overridden with VITE_SUPPLY_WS_URL for other environments.
+// VITE_SUPPLY_WS_URL still overrides if you need a different socket host;
+// otherwise this follows VITE_API_URL, so one variable configures everything.
 const SUPPLY_WS_URL =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     import.meta.env.VITE_SUPPLY_WS_URL) ||
-  "ws://localhost:8080/ws/supply";
+  `${WS_BASE}/ws/supply`;
 
 // Generic confirm dialog (same chrome as the other popups) used for
 // destructive actions like deleting a shipment.

@@ -1,6 +1,7 @@
 package com.chaghor.chaghor.payroll;
 
 import com.chaghor.chaghor.attendance.AttendanceRepository;
+import com.chaghor.chaghor.audit.AuditService;
 import com.chaghor.chaghor.attendance.AttendanceStatus;
 import com.chaghor.chaghor.finance.FinanceService;
 import com.chaghor.chaghor.leaf.LeafCollection;
@@ -54,6 +55,7 @@ public class PayrollService {
     // v10
     private final PendingRecoveryRepository pendingRecoveryRepository;
     private final LoanService loanService;
+    private final com.chaghor.chaghor.audit.AuditService auditService;
 
     // ---- Reads -------------------------------------------------------------
 
@@ -275,7 +277,12 @@ public class PayrollService {
     @Transactional
     public PayrollResponse approve(Long id, String username) {
         Long uid = userId(username);
-        return transition(id, PayrollStatus.review, PayrollStatus.approved, p -> p.setApprovedBy(uid));
+        PayrollResponse resp =
+                transition(id, PayrollStatus.review, PayrollStatus.approved, p -> p.setApprovedBy(uid));
+        auditService.recordTransition("payroll", id, "review", "approved",
+                AuditService.details("netPayable", resp.netPayable(),
+                        "workerId", resp.workerId()));
+        return resp;
     }
 
     @Transactional
@@ -302,6 +309,14 @@ public class PayrollService {
         // Phase 3: (mock) SMS to the worker that their pay has landed. Best-effort,
         // runs in its own transaction so it never affects the payroll/finance commit.
         smsService.notifyPayrollPaid(p.getWorkerId(), p.getNetPayable());
+
+        // Paying is the single most consequential action in the system: cash
+        // leaves, loans are settled, an SMS goes out. Record who did it.
+        auditService.recordTransition("payroll", id, "approved", "paid",
+                AuditService.details("netPayable", nz(p.getNetPayable()),
+                        "loanDeduction", nz(p.getLoanDeduction()),
+                        "workerId", p.getWorkerId(),
+                        "paidOn", paidDate.toString()));
         return resp;
     }
 
@@ -330,6 +345,12 @@ public class PayrollService {
     public PayrollConfigResponse updateConfig(PayrollConfigRequest req, String username) {
         PayrollConfig c = configRepository.findTopByOrderByEffectiveFromDescIdDesc()
                 .orElseGet(this::defaultConfig);
+        // Snapshot the rates BEFORE they are overwritten, for the audit row.
+        Map<String, Object> before = AuditService.details(
+                "baseDailyWage", nz(c.getBaseDailyWage()),
+                "leafQuotaKg", nz(c.getLeafQuotaKg()),
+                "surplusRate", nz(c.getSurplusRate()),
+                "gradeBonusRate", nz(c.getGradeBonusRate()));
         if (req.baseDailyWage() != null) {
             c.setBaseDailyWage(req.baseDailyWage());
         }
@@ -345,6 +366,14 @@ public class PayrollService {
         c.setEffectiveFrom(LocalDate.now());
         c.setUpdatedBy(userId(username));
         configRepository.save(c);
+
+        // Changing a rate silently re-prices every payslip generated afterwards,
+        // so the old and new values both go on the record.
+        auditService.record("UPDATE", "payroll_config", c.getId(), before,
+                AuditService.details("baseDailyWage", nz(c.getBaseDailyWage()),
+                        "leafQuotaKg", nz(c.getLeafQuotaKg()),
+                        "surplusRate", nz(c.getSurplusRate()),
+                        "gradeBonusRate", nz(c.getGradeBonusRate())));
         return toConfigResponse(c);
     }
 

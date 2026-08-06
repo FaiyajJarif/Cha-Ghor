@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.fieldcase;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.fieldcase.dto.*;
 import com.chaghor.chaghor.security.AppUserDetails;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -47,7 +48,7 @@ public class FieldCaseController {
     // submitter identity is taken from the JWT principal, not the request body.
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public CaseDetailResponse create(@RequestBody CreateCaseRequest req,
+    public CaseDetailResponse create(@Valid @RequestBody CreateCaseRequest req,
                                      @AuthenticationPrincipal AppUserDetails principal) {
         return service.create(req, userId(principal), name(principal), role(principal));
     }
@@ -56,7 +57,7 @@ public class FieldCaseController {
     @PostMapping("/{id}/replies")
     @PreAuthorize("hasRole('ADMIN')")
     public CaseDetailResponse reply(@PathVariable Long id,
-                                    @RequestBody ReplyRequest req,
+                                    @Valid @RequestBody ReplyRequest req,
                                     @AuthenticationPrincipal AppUserDetails principal) {
         return service.reply(id, req, userId(principal), name(principal), role(principal));
     }
@@ -64,7 +65,7 @@ public class FieldCaseController {
     // Admin changes status (e.g. mark RESOLVED / REJECTED).
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
-    public CaseDetailResponse updateStatus(@PathVariable Long id, @RequestBody UpdateStatusRequest req) {
+    public CaseDetailResponse updateStatus(@PathVariable Long id, @Valid @RequestBody UpdateStatusRequest req) {
         return service.updateStatus(id, req);
     }
 

@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.notification;
 
+import jakarta.validation.Valid;
 import com.chaghor.chaghor.notification.dto.NotificationRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,7 +19,7 @@ public class NotificationController {
     // demo the bell, and the hook other modules call when something happens.
     @PostMapping("/broadcast")
     @PreAuthorize("hasRole('ADMIN')")
-    public Map<String, Object> broadcast(@RequestBody NotificationRequest req) {
+    public Map<String, Object> broadcast(@Valid @RequestBody NotificationRequest req) {
         return notificationService.send(req.title(), req.body());
     }
 }

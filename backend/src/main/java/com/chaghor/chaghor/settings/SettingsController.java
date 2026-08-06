@@ -31,7 +31,7 @@ public class SettingsController {
     // ---- Profile ----
     @PutMapping("/me/profile")
     public UserResponse updateProfile(@AuthenticationPrincipal AppUserDetails principal,
-                                      @RequestBody ProfileUpdateRequest req) {
+                                      @Valid @RequestBody ProfileUpdateRequest req) {
         User user = currentUser(principal);
         if (req.displayName() != null) user.setDisplayName(blankToNull(req.displayName()));
         if (req.phone() != null) user.setPhone(blankToNull(req.phone()));
@@ -65,7 +65,7 @@ public class SettingsController {
     // ---- Notifications ----
     @PutMapping("/me/notifications")
     public UserResponse updateNotifications(@AuthenticationPrincipal AppUserDetails principal,
-                                            @RequestBody NotificationPrefsRequest req) {
+                                            @Valid @RequestBody NotificationPrefsRequest req) {
         User user = currentUser(principal);
         user.setNotifyBroadcast(req.notifyBroadcast());
         user.setNotifyAttendance(req.notifyAttendance());
@@ -83,7 +83,7 @@ public class SettingsController {
     @PutMapping("/settings/estate")
     @PreAuthorize("hasRole('ADMIN')")
     public EstateSettingsResponse updateEstate(@AuthenticationPrincipal AppUserDetails principal,
-                                               @RequestBody EstateSettingsRequest req) {
+                                               @Valid @RequestBody EstateSettingsRequest req) {
         AppSetting s = loadEstate();
         if (req.estateName() != null && !req.estateName().isBlank()) s.setEstateName(req.estateName().trim());
         if (req.currency() != null && !req.currency().isBlank()) s.setCurrency(req.currency().trim());

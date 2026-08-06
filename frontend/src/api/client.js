@@ -1,7 +1,10 @@
 import axios from "axios";
+import { API_BASE } from "../lib/config";
 
 // Talks to the Spring Boot backend. All auth + API routes live under /api/v1.
-const api = axios.create({ baseURL: "http://localhost:8080/api/v1" });
+// The host comes from src/lib/config.js (VITE_API_URL, defaulting to
+// localhost) so it is not hardcoded in four different files.
+const api = axios.create({ baseURL: API_BASE });
 
 // Attach the JWT on every request.
 api.interceptors.request.use((config) => {
