@@ -9,12 +9,16 @@ import {
   LuChevronRight,
   LuLayoutList,
   LuSave,
+  LuDownload,
+  LuPrinter,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import AttendanceDrawer from "../../components/supervisor/AttendanceDrawer";
+import ZonePicker from "../../components/supervisor/ZonePicker";
+import ZoneHeatmap from "../../components/supervisor/ZoneHeatmap";
 
 // Supervisor attendance register.
 //
@@ -30,6 +34,33 @@ import AttendanceDrawer from "../../components/supervisor/AttendanceDrawer";
 
 const CARD_STROKE = "ring-1 ring-[#13483B59]";
 const PAGE_SIZE = 8;
+const HISTORY_PAGE_SIZE = 5;
+
+// Print stylesheet for the PDF export. Same technique as PayslipDocument and
+// ReportDocument: hide the app, show only the print sheet, and let the browser's
+// "Save as PDF" destination produce the file. No PDF library.
+//
+// The print root is a SIBLING of the app content, never nested inside anything
+// hidden — a display:none ancestor cannot be undone by visibility on a
+// descendant, which is exactly what made the payslip PDF print blank pages.
+const PRINT_CSS = `
+#attendance-print-root { display: none; }
+@media print {
+  body * { visibility: hidden !important; }
+  #attendance-print-root, #attendance-print-root * { visibility: visible !important; }
+  #attendance-print-root {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important; top: 0 !important;
+    width: 100% !important;
+    background: #fff !important;
+  }
+  tr, td, th { page-break-inside: avoid; break-inside: avoid; }
+  thead { display: table-header-group; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+@page { size: A4 portrait; margin: 14mm; }
+`;
 
 const STATUS_STYLE = {
   present: "text-emerald-700",
@@ -72,6 +103,8 @@ export default function SupervisorAttendance() {
   const [history, setHistory] = useState([]);
   const [zoneFilter, setZoneFilter] = useState("");
   const [page, setPage] = useState(0);
+  const [histPage, setHistPage] = useState(0);
+  const [printing, setPrinting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -164,6 +197,16 @@ export default function SupervisorAttendance() {
     return c;
   }, [rows]);
 
+  // Days that actually have a register, newest first.
+  const historyRows = useMemo(
+    () => history.filter((d) => d.present + d.absent + d.late + d.onLeave > 0),
+    [history],
+  );
+  const historyTotalPages = Math.max(
+    1,
+    Math.ceil(historyRows.length / HISTORY_PAGE_SIZE),
+  );
+
   const setStatus = (workerId, status) => {
     setDraft((d) => ({ ...d, [workerId]: { ...d[workerId], status } }));
     setNotice("");
@@ -234,6 +277,19 @@ export default function SupervisorAttendance() {
     a.download = `attendance-${date}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // PDF via the browser's own print dialog, the same approach as the payslip
+  // and report documents: no PDF library, smaller file, selectable text.
+  // `printing` swaps in a print-only sheet with the FULL register, so the PDF
+  // is never just whichever page happened to be on screen.
+  const exportPdf = () => {
+    setPrinting(true);
+    // Let React paint the print sheet before the dialog blocks the thread.
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
   };
 
   if (loading) {
@@ -317,24 +373,25 @@ export default function SupervisorAttendance() {
           onChange={(e) => setDate(e.target.value)}
           className="rounded-lg border border-cg-green/30 px-3 py-2 text-sm outline-none focus:border-cg-green"
         />
-        <select
-          value={zoneFilter}
-          onChange={(e) => {
-            setZoneFilter(e.target.value);
-            setPage(0);
-          }}
-          className="rounded-lg border border-cg-green/30 px-3 py-2 text-sm outline-none focus:border-cg-green"
-        >
-          <option value="">All fields</option>
-          {zones.map((z) => (
-            <option key={z.id} value={String(z.id)}>
-              {z.label}
-            </option>
-          ))}
-        </select>
+        <div className="w-48">
+          <ZonePicker
+            value={zoneFilter ? Number(zoneFilter) : null}
+            zones={zones}
+            homeZoneName="All fields"
+            placeholder="All fields"
+            size="lg"
+            onChange={(id) => {
+              setZoneFilter(id ? String(id) : "");
+              setPage(0);
+            }}
+          />
+        </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button type="button" className={BTN_GHOST} onClick={exportCsv}>
-            Export CSV
+            <LuDownload size={15} /> CSV
+          </button>
+          <button type="button" className={BTN_GHOST} onClick={exportPdf}>
+            <LuPrinter size={15} /> PDF
           </button>
           <button type="button" className={BTN_GHOST} onClick={markAllPresent}>
             <LuCheckCheck size={15} /> Mark all present
@@ -394,23 +451,14 @@ export default function SupervisorAttendance() {
                     <td className="px-5 py-3">
                       {/* Only someone who turned up can be sent to a field. */}
                       {r.status === "present" || r.status === "late" ? (
-                        <select
-                          value={r.zoneId ?? ""}
-                          onChange={(e) =>
-                            setZone(
-                              r.workerId,
-                              e.target.value ? Number(e.target.value) : null,
-                            )
-                          }
-                          className="rounded-lg border border-cg-green/30 px-2 py-1 text-xs outline-none focus:border-cg-green"
-                        >
-                          <option value="">{r.homeZoneName} (home)</option>
-                          {zones.map((z) => (
-                            <option key={z.id} value={z.id}>
-                              {z.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="w-40">
+                          <ZonePicker
+                            value={r.zoneId}
+                            zones={zones}
+                            homeZoneName={r.homeZoneName}
+                            onChange={(id) => setZone(r.workerId, id)}
+                          />
+                        </div>
                       ) : (
                         <span className="text-xs text-cg-ink/30">—</span>
                       )}
@@ -466,6 +514,15 @@ export default function SupervisorAttendance() {
         )}
       </div>
 
+      {/* Attendance insights — heatmap by field */}
+      <div className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`}>
+        <div className="mb-4 flex items-center gap-2">
+          <h2 className="font-bold text-cg-ink">Attendance Insights</h2>
+          <InfoTip text="Each field is coloured by how much of its assigned crew turned up today, using the register on this page. Workers count towards the field they are assigned to, or their home zone if none was set." />
+        </div>
+        <ZoneHeatmap rows={rows} zones={zones} />
+      </div>
+
       {/* History + summary */}
       <div className="grid gap-6 lg:grid-cols-3">
         <div
@@ -474,15 +531,17 @@ export default function SupervisorAttendance() {
           <div className="bg-[#C0F28B] px-5 py-3 font-bold text-cg-ink">
             Attendance History
           </div>
-          {history.every((d) => d.present + d.absent + d.late + d.onLeave === 0) ? (
+          {historyRows.length === 0 ? (
             <div className="grid h-32 place-items-center px-6 text-center text-sm text-cg-ink/50">
               No attendance saved in the last 14 days yet.
             </div>
           ) : (
             <ul className="divide-y divide-cg-green/10">
-              {history
-                .filter((d) => d.present + d.absent + d.late + d.onLeave > 0)
-                .slice(0, 6)
+              {historyRows
+                .slice(
+                  histPage * HISTORY_PAGE_SIZE,
+                  histPage * HISTORY_PAGE_SIZE + HISTORY_PAGE_SIZE,
+                )
                 .map((d) => (
                   <li
                     key={d.date}
@@ -514,6 +573,32 @@ export default function SupervisorAttendance() {
                   </li>
                 ))}
             </ul>
+          )}
+
+          {historyRows.length > HISTORY_PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-3 bg-[#D3FFAC] px-5 py-3 text-sm">
+              <button
+                type="button"
+                onClick={() => setHistPage((p) => Math.max(0, p - 1))}
+                disabled={histPage === 0}
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-cg-ink/70 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <LuChevronLeft size={15} /> Previous
+              </button>
+              <span className="text-xs font-semibold text-cg-ink/70">
+                Page {histPage + 1} of {historyTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setHistPage((p) => Math.min(historyTotalPages - 1, p + 1))
+                }
+                disabled={histPage + 1 >= historyTotalPages}
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-cg-ink/70 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next <LuChevronRight size={15} />
+              </button>
+            </div>
           )}
         </div>
 
@@ -547,12 +632,81 @@ export default function SupervisorAttendance() {
         </div>
       </div>
 
+      {/* Print-only sheet: the FULL register, not just the page on screen.
+          Rendered as a sibling of everything else — never inside a hidden
+          wrapper — so it cannot end up display:none when printing. */}
+      <style>{PRINT_CSS}</style>
+      {printing && (
+        <div id="attendance-print-root">
+          <div style={{ padding: "0 0 12px" }}>
+            <h1 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>
+              Cha Ghor — Daily Attendance
+            </h1>
+            <p style={{ fontSize: 12, color: "#555", margin: "2px 0 0" }}>
+              {date} · {counts.present} present · {counts.late} late ·{" "}
+              {counts.absent} absent · {counts.leave} on leave ·{" "}
+              {counts.unmarked} not marked
+            </p>
+          </div>
+          <table
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}
+          >
+            <thead>
+              <tr style={{ background: "#D3FFAC" }}>
+                <th style={{ border: "1px solid #ccc", padding: 6, textAlign: "left" }}>
+                  Worker ID
+                </th>
+                <th style={{ border: "1px solid #ccc", padding: 6, textAlign: "left" }}>
+                  Name
+                </th>
+                <th style={{ border: "1px solid #ccc", padding: 6, textAlign: "left" }}>
+                  Role
+                </th>
+                <th style={{ border: "1px solid #ccc", padding: 6, textAlign: "left" }}>
+                  Field
+                </th>
+                <th style={{ border: "1px solid #ccc", padding: 6, textAlign: "left" }}>
+                  Status
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.workerId}>
+                  <td style={{ border: "1px solid #ccc", padding: 6 }}>
+                    CG{String(r.workerId).padStart(3, "0")}
+                  </td>
+                  <td style={{ border: "1px solid #ccc", padding: 6 }}>{r.name}</td>
+                  <td style={{ border: "1px solid #ccc", padding: 6 }}>
+                    {r.jobRole}
+                  </td>
+                  <td style={{ border: "1px solid #ccc", padding: 6 }}>
+                    {zones.find((z) => z.id === (r.zoneId ?? r.homeZoneId))
+                      ?.label ?? "—"}
+                  </td>
+                  <td style={{ border: "1px solid #ccc", padding: 6 }}>
+                    {r.status || "not marked"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ fontSize: 10, color: "#777", marginTop: 10 }}>
+            Generated by Cha Ghor on {new Date().toLocaleString("en-GB")}.
+          </p>
+        </div>
+      )}
+
       <AttendanceDrawer
         open={drawerOpen}
+        date={date}
         rows={rows}
         zones={zones}
         onSetStatus={setStatus}
         onSetZone={setZone}
+        onMarkAllPresent={markAllPresent}
+        onSave={save}
+        saving={saving}
         onClose={() => setDrawerOpen(false)}
       />
     </div>
