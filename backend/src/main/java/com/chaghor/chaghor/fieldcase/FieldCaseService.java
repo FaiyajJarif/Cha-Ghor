@@ -147,6 +147,21 @@ public class FieldCaseService {
         return detail(id);
     }
 
+    // Attach (or replace) the evidence on a case that already exists. The URL
+    // comes from POST /complaints/attachments, which has already validated the
+    // file's type and magic bytes -- nothing here trusts a caller-supplied path.
+    //
+    // Replacing leaves the previous file on disk. That is deliberate for now:
+    // an evidence file that quietly disappears is worse than one that lingers,
+    // and a sweep of orphaned files is a separate job.
+    public CaseDetailResponse attachEvidence(Long id, String evidenceUrl) {
+        FieldCase c = cases.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "That case could not be found."));
+        c.setEvidenceUrl(emptyToNull(evidenceUrl));
+        cases.save(c);
+        return detail(id);
+    }
+
     public void delete(Long id) {
         FieldCase c = getOr404(id);
         replies.deleteByCaseId(c.getId());

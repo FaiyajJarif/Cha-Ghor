@@ -40,6 +40,11 @@ ROUTES = {
     # only if the operator sets ROUTE_LOAN_SCORE=gemini -- worth doing for the
     # Bangla explanation, which Gemini writes noticeably better.
     "loan_score": os.getenv("ROUTE_LOAN_SCORE", "ollama"),
+    # case review reads complaint text, which is frequently Bangla and needs a
+    # Bangla reply drafted back. Gemini is markedly better at that than the
+    # local model, and a complaint body is far less sensitive than a payroll
+    # row. Set ROUTE_CASE_REVIEW=ollama to keep it on the machine instead.
+    "case_review": os.getenv("ROUTE_CASE_REVIEW", "gemini"),
 }
 
 TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))

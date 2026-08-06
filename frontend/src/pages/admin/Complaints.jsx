@@ -12,6 +12,8 @@ import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
+import CaseEvidence from "../../components/admin/CaseEvidence";
+import CaseReviewPanel from "../../components/admin/CaseReviewPanel";
 
 // Reports & Complaints — the field-issue inbox. Workers and supervisors submit
 // complaints / field reports; the admin reviews, replies and resolves them.
@@ -278,8 +280,9 @@ export default function Complaints() {
           AI report validation
         </span>
         <span>
-          coming in the AI phase: auto-triage, spam / duplicate detection,
-          Bangla to English summaries, and a suggested reply draft.
+          Open any case and use <span className="font-semibold">Review this
+          case</span> for auto-triage, duplicate detection, a Bangla/English
+          summary and a suggested reply draft.
         </span>
       </div>
 
@@ -429,22 +432,14 @@ export default function Complaints() {
                 </div>
               </div>
 
-              <div>
-                <p className="mb-1 text-sm font-semibold text-cg-dark">
-                  Attached Evidence / Field Visuals
-                </p>
-                {detail.evidenceUrl ? (
-                  <img
-                    src={detail.evidenceUrl}
-                    alt="Attached evidence"
-                    className="max-h-56 rounded-xl border border-cg-lime/60 object-cover"
-                  />
-                ) : (
-                  <div className="grid h-32 w-full max-w-xs place-items-center rounded-xl border border-dashed border-cg-lime bg-cg-lime/10 text-xs text-cg-dark/40">
-                    No attachment
-                  </div>
-                )}
-              </div>
+              <CaseEvidence
+                caseId={detail.id}
+                evidenceUrl={detail.evidenceUrl}
+                canEdit={isAdmin}
+                onChanged={() => loadDetail(detail.id)}
+              />
+
+              {isAdmin ? <CaseReviewPanel caseId={detail.id} /> : null}
 
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-cg-dark/50">
                 <span>Submitted: {fmt(detail.createdAt)}</span>

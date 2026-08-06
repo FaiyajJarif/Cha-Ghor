@@ -7,6 +7,7 @@ Endpoints (called by the Spring backend, never by the browser directly):
   POST /report          -> narrative auto-report from aggregate KPIs
   POST /anomalies       -> LLM review of payroll / loan rows for what looks wrong
   POST /loan-score      -> credit risk judgement from a fact sheet the backend built
+  POST /case-review     -> triage, duplicate check, translation and a reply draft
   GET  /health
 
 Free LLMs only: Ollama (local) + Gemini (free tier), via a per-task router with
@@ -59,6 +60,12 @@ class AnomalyRequest(BaseModel):
 class LoanScoreRequest(BaseModel):
     features: dict          # the fact sheet, computed by the Spring backend
     requested_amount: float
+
+
+class CaseReviewRequest(BaseModel):
+    case: dict              # the case being reviewed
+    candidates: list = []   # other open cases it might duplicate
+    categories: list = []   # the categories already in use, so it reuses them
 
 
 @app.get("/health")
@@ -468,5 +475,148 @@ def loan_score_endpoint(req: LoanScoreRequest):
     parsed = _parse_score(text, req.requested_amount)
     if parsed is None:
         raise HTTPException(status_code=502, detail="Model returned an unusable score")
+    parsed["provider"] = provider
+    return parsed
+
+
+# --- case review (Reports & Complaints) --------------------------------------
+# Four things at once, because they all read the same text and one round trip is
+# far cheaper than four:
+#   triage        -> a category and a priority
+#   duplicates    -> does this repeat a case already open
+#   translation   -> a short summary in the other language
+#   reply draft   -> something the admin edits and sends, never auto-sent
+#
+# The backend supplies the case and the candidate duplicates; nothing is read
+# from the database here. The candidate ids the model may cite are re-checked by
+# the backend afterwards, so a hallucinated case number never reaches the screen.
+#
+# Routed to Gemini by default: this text is often Bangla, which the local model
+# handles noticeably worse, and a case body is far less sensitive than a payroll
+# row. Override with ROUTE_CASE_REVIEW=ollama to keep it on the machine.
+
+_CASE_REVIEW_SYSTEM = """You are a case officer at a Bangladeshi tea estate, reviewing a complaint or
+field report submitted by a worker or supervisor.
+
+You are given THIS_CASE, a list of CANDIDATES (other open cases that might be the same
+issue), and CATEGORIES already in use on this estate.
+
+Return ONLY a JSON object, no prose and no markdown fences:
+{"category": "<one of CATEGORIES, or a short new one if none fit>",
+ "priority": "LOW"|"MEDIUM"|"HIGH",
+ "priority_reason": "<one short sentence>",
+ "duplicate_of": <a CANDIDATE id, or null>,
+ "duplicate_confidence": "high"|"medium"|"low"|null,
+ "duplicate_reason": "<one short sentence, or null>",
+ "language": "bn"|"en"|"mixed",
+ "summary_other_language": "<2 sentences: if the case is Bangla summarise in English, if English summarise in Bangla>",
+ "reply_draft": "<3-4 sentences the admin could send, in the SAME language the case was written in>",
+ "looks_like_spam": true|false}
+
+Rules:
+- `duplicate_of` MUST be an id present in CANDIDATES, or null. Never invent one.
+  Only set it when the two describe the SAME underlying problem -- two people reporting
+  one broken pump is a duplicate; two separate wage disputes are not.
+- Priority guidance: HIGH means safety, injury, no water, no pay, or something getting
+  worse by the hour. LOW means cosmetic or routine. Most things are MEDIUM.
+- The reply draft must be respectful, acknowledge the specific problem, and say what
+  happens next. Never promise money, compensation or a deadline you were not given.
+- Never invent facts that are not in the case text.
+- `looks_like_spam` is true only for empty, nonsense or test submissions.
+"""
+
+
+def _case_review_messages(case, candidates, categories):
+    payload = {
+        "THIS_CASE": case,
+        "CANDIDATES": candidates[:20],
+        "CATEGORIES": categories[:30],
+    }
+    return [
+        {"role": "system", "content": _CASE_REVIEW_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, default=str)[:10000]},
+    ]
+
+
+_PRIORITIES = {"LOW", "MEDIUM", "HIGH"}
+_CONF = {"high", "medium", "low"}
+
+
+def _parse_case_review(text, valid_ids):
+    s = (text or "").strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        s = s.split("\n", 1)[1] if "\n" in s else s
+        if s.lstrip().lower().startswith("json"):
+            s = s.lstrip()[4:]
+    start, end = s.find("{"), s.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        raw = json.loads(s[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    priority = str(raw.get("priority", "")).strip().upper()
+    if priority not in _PRIORITIES:
+        priority = "MEDIUM"
+
+    # A duplicate id the backend never sent is dropped outright.
+    dup = raw.get("duplicate_of")
+    try:
+        dup = None if dup is None else int(dup)
+    except (TypeError, ValueError):
+        dup = None
+    if dup is not None and dup not in valid_ids:
+        dup = None
+
+    conf = str(raw.get("duplicate_confidence") or "").strip().lower()
+    if dup is None or conf not in _CONF:
+        conf = None
+
+    lang = str(raw.get("language") or "").strip().lower()
+    if lang not in ("bn", "en", "mixed"):
+        lang = "en"
+
+    def s600(v):
+        return str(v or "").strip()[:600]
+
+    return {
+        "category": str(raw.get("category") or "").strip()[:60],
+        "priority": priority,
+        "priority_reason": s600(raw.get("priority_reason")),
+        "duplicate_of": dup,
+        "duplicate_confidence": conf,
+        "duplicate_reason": s600(raw.get("duplicate_reason")) if dup is not None else None,
+        "language": lang,
+        "summary_other_language": s600(raw.get("summary_other_language")),
+        "reply_draft": s600(raw.get("reply_draft")),
+        "looks_like_spam": bool(raw.get("looks_like_spam")),
+    }
+
+
+@app.post("/case-review")
+def case_review_endpoint(req: CaseReviewRequest):
+    if not req.case:
+        raise HTTPException(status_code=400, detail="No case supplied")
+    valid_ids = set()
+    for c in req.candidates or []:
+        try:
+            valid_ids.add(int(c.get("id")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    try:
+        text, provider = complete(
+            "case_review",
+            _case_review_messages(req.case, req.candidates or [], req.categories or []),
+        )
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
+
+    parsed = _parse_case_review(text, valid_ids)
+    if parsed is None:
+        raise HTTPException(status_code=502, detail="Model returned an unusable review")
     parsed["provider"] = provider
     return parsed

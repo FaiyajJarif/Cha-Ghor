@@ -37,6 +37,12 @@ server:
 
 # App-specific config
 app:
+  # Where complaint / field-report evidence is written. Relative paths resolve
+  # against the backend's working directory, so the default puts files in
+  # backend/uploads/cases/. Point this somewhere persistent for a real deploy --
+  # the directory is created on first upload if it does not exist.
+  uploads:
+    dir: ${APP_UPLOADS_DIR:uploads}
   jwt:
     # Dev default is long enough for HS384. ALWAYS override with APP_JWT_SECRET in
     # staging/production, and rotate it if it ever leaks.

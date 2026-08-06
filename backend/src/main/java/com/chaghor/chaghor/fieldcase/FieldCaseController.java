@@ -3,11 +3,15 @@ package com.chaghor.chaghor.fieldcase;
 import jakarta.validation.Valid;
 import com.chaghor.chaghor.fieldcase.dto.*;
 import com.chaghor.chaghor.security.AppUserDetails;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 // REST surface for the Reports & Complaints module. Reads are open to admin +
 // supervisor. Submitting a case is open to any authenticated estate user
@@ -18,9 +22,79 @@ import java.util.List;
 public class FieldCaseController {
 
     private final FieldCaseService service;
+    private final CaseAttachmentService attachments;
+    private final CaseReviewService review;
 
-    public FieldCaseController(FieldCaseService service) {
+    public FieldCaseController(FieldCaseService service,
+                               CaseAttachmentService attachments,
+                               CaseReviewService review) {
         this.service = service;
+        this.attachments = attachments;
+        this.review = review;
+    }
+
+    // AI review of one case: suggested category and priority, whether it looks
+    // like a duplicate, a summary in the other language, and a reply draft.
+    //
+    // Every field is advisory. This endpoint changes nothing on the case, and
+    // the reply draft is not sent anywhere -- it comes back as text for the
+    // admin to edit.
+    @PostMapping("/{id}/review")
+    @PreAuthorize("hasRole('ADMIN')")
+    public CaseReviewResponse aiReview(@PathVariable Long id) {
+        return review.review(id);
+    }
+
+    // ---- evidence ----------------------------------------------------------
+
+    // Upload a photo or PDF and get back the URL to store on the case.
+    //
+    // Two steps rather than one multipart-plus-JSON request: the file is
+    // uploaded first, then the returned URL is sent as `evidenceUrl` when the
+    // case is created or updated. That keeps the existing JSON endpoints
+    // untouched and lets a supervisor attach evidence to a case that already
+    // exists.
+    //
+    // Open to any authenticated user, because raising a case already is -- a
+    // worker reporting a problem needs to be able to attach the photo of it.
+    @PostMapping("/attachments")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> upload(@RequestParam("file") MultipartFile file) {
+        String storedName = attachments.store(file);
+        return Map.of(
+                "url", "/api/v1/complaints/attachments/" + storedName,
+                "storedName", storedName,
+                "contentType", attachments.contentTypeOf(storedName),
+                "sizeBytes", file.getSize());
+    }
+
+    // Attach the uploaded evidence to a case that already exists -- the normal
+    // flow when a supervisor photographs the problem after reporting it.
+    @PutMapping("/{id}/evidence")
+    @PreAuthorize("isAuthenticated()")
+    public CaseDetailResponse attachEvidence(@PathVariable Long id,
+                                             @RequestBody Map<String, String> body) {
+        return service.attachEvidence(id, body == null ? null : body.get("evidenceUrl"));
+    }
+
+    // Serve an attachment. Authenticated like everything else, so evidence
+    // about a named worker is not readable by anyone with the link.
+    //
+    // That is why the frontend fetches this through axios into a blob rather
+    // than putting it in an <img src>: a plain img tag sends no Authorization
+    // header and would just 401.
+    @GetMapping("/attachments/{storedName}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<byte[]> download(@PathVariable String storedName) {
+        byte[] data = attachments.read(storedName);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, attachments.contentTypeOf(storedName))
+                // inline so images render and PDFs open, rather than always downloading
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + storedName + "\"")
+                // never let a browser second-guess the type we declared
+                .header("X-Content-Type-Options", "nosniff")
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
+                .body(data);
     }
 
     // The four KPI cards.

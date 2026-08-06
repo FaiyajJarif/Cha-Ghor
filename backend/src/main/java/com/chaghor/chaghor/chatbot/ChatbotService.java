@@ -102,6 +102,20 @@ public class ChatbotService {
         return post("/loan-score", payload, 90);
     }
 
+    // Ask the AI service to review a complaint / field report: triage it, say
+    // whether it duplicates one of the candidate cases we send, summarise it in
+    // the other language, and draft a reply. Every suggestion is advisory and
+    // the duplicate id is re-checked by the caller.
+    public Map<String, Object> reviewCase(Map<String, Object> caseData,
+                                          List<Map<String, Object>> candidates,
+                                          List<String> categories) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("case", caseData);
+        payload.put("candidates", candidates);
+        payload.put("categories", categories);
+        return post("/case-review", payload, 90);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> post(String path, Map<String, Object> payload, int timeoutSeconds) {
         try {
