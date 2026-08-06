@@ -31,6 +31,15 @@ ROUTES = {
     "answer": os.getenv("ROUTE_ANSWER", "ollama"),
     "extract": os.getenv("ROUTE_EXTRACT", "gemini"),
     "report": os.getenv("ROUTE_REPORT", "gemini"),
+    # anomaly detection reads real payroll / loan rows, so it defaults to the
+    # LOCAL model for the same reason "answer" does -- row-level money data
+    # should not leave the machine unless the operator opts in.
+    "anomaly": os.getenv("ROUTE_ANOMALY", "ollama"),
+    # loan scoring sees one worker's fact sheet (a named individual's borrowing
+    # and attendance record), so it stays local by default too. Gemini leads
+    # only if the operator sets ROUTE_LOAN_SCORE=gemini -- worth doing for the
+    # Bangla explanation, which Gemini writes noticeably better.
+    "loan_score": os.getenv("ROUTE_LOAN_SCORE", "ollama"),
 }
 
 TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))

@@ -1,7 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   ResponsiveContainer,
-  BarChart,
   Bar,
   XAxis,
   YAxis,
@@ -24,11 +23,14 @@ import {
   LuTrash2,
   LuChevronDown,
   LuChevronRight,
+  LuDownload,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
+import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
+import ReportDocument from "../../components/admin/ReportDocument";
 
 // Estate money is in Bangladeshi Taka (\u09f3).
 function taka(n) {
@@ -51,15 +53,9 @@ function titleCase(s) {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
-function apiError(err, fallback) {
-  const code = err?.response?.status;
-  const body = err?.response?.data;
-  if (typeof body === "string" && body) return body;
-  if (body?.message) return body.message;
-  if (code === 403) return "Only an admin can do that.";
-  if (code === 401) return "Please sign in again.";
-  return fallback;
-}
+// apiError lives in src/lib/apiError.js -- this file used to carry a private
+// copy that missed 429 throttling and the Bean Validation {error, fields}
+// shape. Import it; do not reintroduce a local one.
 
 // First + last day of the current month as ISO strings, for the default period.
 function monthDefaults() {
@@ -132,6 +128,17 @@ export default function Reports() {
   const [generating, setGenerating] = useState(false);
   const [lang, setLang] = useState("en");
   const [error, setError] = useState("");
+  // Export preview: { report } for a saved row, or {} for the current period.
+  const [exporting, setExporting] = useState(null);
+  // Two-step delete, so a saved report is never lost to a single stray click.
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  // periodStart must not be after periodEnd. The backend would otherwise return
+  // an empty summary with no explanation of why.
+  const rangeError =
+    periodStart && periodEnd && periodStart > periodEnd
+      ? "The From date is after the To date."
+      : "";
 
   const loadSummary = useCallback(async () => {
     const { data } = await api.get("/reports/summary", {
@@ -169,19 +176,33 @@ export default function Reports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Apply reloads the trend as well as the summary -- the chart is period-
+  // independent today, but refreshing both keeps the page from showing figures
+  // and a chart that were fetched at different times.
   const applyPeriod = (e) => {
     e.preventDefault();
-    loadSummary().catch((err) =>
+    if (rangeError) {
+      setError(rangeError);
+      return;
+    }
+    setError("");
+    Promise.all([loadSummary(), loadStatic()]).catch((err) =>
       setError(apiError(err, "Could not load the summary for that period.")),
     );
   };
 
   const generate = async () => {
+    if (rangeError) {
+      setError(rangeError);
+      return;
+    }
     setGenerating(true);
     setError("");
     try {
       await api.post("/reports/generate", { periodStart, periodEnd, language: lang });
-      await loadStatic();
+      // Reload the KPI cards and the trend too, not just the saved list --
+      // generating changes what the period looks like.
+      await Promise.all([loadSummary(), loadStatic()]);
     } catch (err) {
       setError(apiError(err, "Could not generate the report. Try again."));
     } finally {
@@ -201,6 +222,7 @@ export default function Reports() {
   const remove = async (id) => {
     try {
       await api.delete(`/reports/${id}`);
+      setConfirmDelete(null);
       await loadStatic();
     } catch (err) {
       setError(apiError(err, "Could not delete that report."));
@@ -239,8 +261,21 @@ export default function Reports() {
               onChange={(e) => setPeriodEnd(e.target.value)}
             />
           </label>
-          <button type="submit" className={BTN_GHOST}>
+          <button type="submit" className={BTN_GHOST} disabled={!!rangeError}>
             Apply
+          </button>
+          <button
+            type="button"
+            className={BTN_GHOST}
+            onClick={() => setExporting({})}
+            disabled={!summary || !!rangeError}
+            title={
+              summary
+                ? "Preview and save this period as a PDF"
+                : "Load a period first"
+            }
+          >
+            <LuDownload size={16} /> Export
           </button>
           {isAdmin ? (
             <div className="flex overflow-hidden rounded-lg border border-cg-green/30 text-xs font-semibold">
@@ -265,7 +300,7 @@ export default function Reports() {
               type="button"
               className={BTN_DARK}
               onClick={generate}
-              disabled={generating}
+              disabled={generating || !!rangeError}
             >
               <LuPlus size={16} />{" "}
               {generating ? "Generating\u2026" : "Generate report"}
@@ -273,6 +308,12 @@ export default function Reports() {
           ) : null}
         </form>
       </div>
+
+      {rangeError && (
+        <div className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+          {rangeError} Pick a From date on or before the To date.
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
@@ -499,6 +540,13 @@ export default function Reports() {
                         </td>
                         <td className="px-5 py-3">
                           <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              className={BTN_GHOST}
+                              onClick={() => setExporting({ report: r })}
+                            >
+                              <LuDownload size={14} /> Export
+                            </button>
                             {isAdmin && r.status !== "FINALIZED" ? (
                               <button
                                 type="button"
@@ -509,14 +557,33 @@ export default function Reports() {
                               </button>
                             ) : null}
                             {isAdmin ? (
-                              <button
-                                type="button"
-                                aria-label="Delete report"
-                                className="grid h-8 w-8 place-items-center rounded-lg text-red-600 hover:bg-red-50"
-                                onClick={() => remove(r.id)}
-                              >
-                                <LuTrash2 size={16} />
-                              </button>
+                              confirmDelete === r.id ? (
+                                <span className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="rounded-lg bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-700"
+                                    onClick={() => remove(r.id)}
+                                  >
+                                    Delete
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-lg px-2 py-1 text-xs font-semibold text-cg-ink/60 hover:bg-black/5"
+                                    onClick={() => setConfirmDelete(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  aria-label="Delete report"
+                                  className="grid h-8 w-8 place-items-center rounded-lg text-red-600 hover:bg-red-50"
+                                  onClick={() => setConfirmDelete(r.id)}
+                                >
+                                  <LuTrash2 size={16} />
+                                </button>
+                              )
                             ) : null}
                           </div>
                         </td>
@@ -546,6 +613,17 @@ export default function Reports() {
           </table>
         </div>
       </div>
+
+      {exporting && (
+        <ReportDocument
+          summary={summary}
+          trend={trend}
+          periodStart={periodStart}
+          periodEnd={periodEnd}
+          report={exporting.report || null}
+          onClose={() => setExporting(null)}
+        />
+      )}
     </div>
   );
 }

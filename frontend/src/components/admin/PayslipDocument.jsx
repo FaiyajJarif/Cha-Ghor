@@ -10,11 +10,20 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 // hidden with `visibility`, then only this document is shown again. We use
 // visibility rather than display so the print root does not have to be a direct
 // child of <body>, which keeps it mountable from anywhere.
+//
+// LAYOUT RULE: #payslip-print-root must NOT be nested inside any .no-print
+// element. `.no-print` is display:none when printing, and nothing inside a
+// display:none ancestor can be brought back by `visibility: visible` -- the
+// subtree is simply not rendered and you get blank pages. So the payslips are
+// rendered twice from one `pages` array: once inside the modal for the preview,
+// and once in a print-only root that is a sibling of the modal.
 const PRINT_CSS = `
+#payslip-print-root { display: none; }
 @media print {
   body * { visibility: hidden !important; }
   #payslip-print-root, #payslip-print-root * { visibility: visible !important; }
   #payslip-print-root {
+    display: block !important;
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
@@ -237,6 +246,14 @@ export default function PayslipDocument({ rows, config, onClose }) {
 
   const many = list.length > 1;
 
+  // Built once, rendered twice: in the modal for the on-screen preview, and in
+  // the print-only root below. See the layout rule above PRINT_CSS.
+  const pages = list.map((r) => (
+    <div key={r.id} className="rounded-lg shadow ring-1 ring-black/5">
+      <OnePayslip row={r} config={config} />
+    </div>
+  ));
+
   return createPortal(
     <>
       <style>{PRINT_CSS}</style>
@@ -268,13 +285,7 @@ export default function PayslipDocument({ rows, config, onClose }) {
           </div>
 
           <div className="flex-1 overflow-y-auto bg-gray-100 p-4">
-            <div id="payslip-print-root" className="space-y-4">
-              {list.map((r) => (
-                <div key={r.id} className="rounded-lg shadow ring-1 ring-black/5">
-                  <OnePayslip row={r} config={config} />
-                </div>
-              ))}
-            </div>
+            <div className="space-y-4">{pages}</div>
           </div>
 
           <div className="flex items-center justify-end gap-2 bg-[#D3FFAC] px-5 py-3">
@@ -291,6 +302,14 @@ export default function PayslipDocument({ rows, config, onClose }) {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Print-only copy. MUST stay OUTSIDE the .no-print wrappers above:
+          .no-print is display:none when printing, and a display:none ancestor
+          cannot be undone by visibility on a descendant. Nesting the print root
+          inside the modal is what made this print blank pages. */}
+      <div id="payslip-print-root" className="space-y-4">
+        {pages}
       </div>
     </>,
     document.body

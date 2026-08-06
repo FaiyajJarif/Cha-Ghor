@@ -35,6 +35,7 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import WithdrawalsPanel from "../../components/admin/WithdrawalsPanel";
+import AnomalyPanel from "../../components/admin/AnomalyPanel";
 import SmsLogPanel from "../../components/admin/SmsLogPanel";
 import PayslipDocument from "../../components/admin/PayslipDocument";
 
@@ -744,20 +745,11 @@ export default function Payroll() {
         )}
       </div>
 
-      {/* AI callout */}
-      <div className="flex items-start gap-3 rounded-2xl border border-dashed border-cg-green/30 bg-white p-4">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green">
-          🤖
-        </span>
-        <div className="text-sm text-cg-ink/70">
-          <span className="font-semibold text-cg-ink">
-            AI (planned): payroll anomaly detection.
-          </span>{" "}
-          Before you approve a run, the assistant will flag impossible leaf
-          weights, sudden payroll spikes, and suspected proxy attendance — with
-          a plain-language reason. Wired once the AI service is live.
-        </div>
-      </div>
+      {/* AI anomaly flags — live. Run it before approving a payroll run. */}
+      <AnomalyPanel
+        scope="payroll"
+        title="AI anomaly flags — payroll"
+      />
 
       {/* Payroll details table */}
       <div className="overflow-hidden rounded-2xl bg-white shadow ring-1 ring-cg-green/10">

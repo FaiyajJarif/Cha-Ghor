@@ -18,9 +18,28 @@ import java.util.List;
 public class LoanController {
 
     private final LoanService service;
+    private final LoanScoringService scoringService;
 
-    public LoanController(LoanService service) {
+    public LoanController(LoanService service, LoanScoringService scoringService) {
         this.service = service;
+        this.scoringService = scoringService;
+    }
+
+    // AI credit assessment for one request. GET returns whatever was stored
+    // last (no model call); POST re-runs the scorer and overwrites it.
+    //
+    // Both are advisory only. Nothing here changes a loan's status -- approve
+    // and reject still go through decide() below, admin-only.
+    @GetMapping("/requests/{id}/score")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public LoanScoreResponse existingScore(@PathVariable Long id) {
+        return scoringService.existing(id);
+    }
+
+    @PostMapping("/requests/{id}/score")
+    @PreAuthorize("hasRole('ADMIN')")
+    public LoanScoreResponse score(@PathVariable Long id) {
+        return scoringService.score(id);
     }
 
     @GetMapping("/summary")

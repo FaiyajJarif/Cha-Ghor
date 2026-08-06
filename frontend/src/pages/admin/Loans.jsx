@@ -11,11 +11,14 @@ import {
   LuCheck,
   LuChevronLeft,
   LuChevronRight,
+  LuBrain,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
+import AnomalyPanel from "../../components/admin/AnomalyPanel";
+import LoanScoreCard from "../../components/admin/LoanScoreCard";
 
 const PAGE_SIZE = 6; // active repayments (server-side)
 const REQ_PAGE_SIZE = 5; // pending requests (client-side)
@@ -451,6 +454,8 @@ export default function Loans() {
   const [error, setError] = useState("");
   const [busyReq, setBusyReq] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  // The pending request currently open in the AI assessment panel.
+  const [scoring, setScoring] = useState(null);
   const [repayFor, setRepayFor] = useState(null);
 
   const loadTop = useCallback(async () => {
@@ -576,6 +581,10 @@ export default function Loans() {
       {/* Pipeline stepper */}
       <Pipeline />
 
+      {/* AI anomaly flags — catches loans that can never be recovered from
+          wages, over-recovery, and figures that do not add up. */}
+      <AnomalyPanel scope="loan" title="AI anomaly flags — loans" />
+
       {/* Pending Loan Requests */}
       <div className="overflow-hidden rounded-2xl bg-white shadow ring-1 ring-cg-green/10">
         <div className="border-b border-cg-green/10 bg-[#C0F28B] px-5 py-4">
@@ -625,6 +634,17 @@ export default function Loans() {
                     <td className="px-5 py-4">
                       {isAdmin ? (
                         <div className="flex items-center justify-end gap-2">
+                          {/* AI assessment. Advisory only — it opens a panel,
+                              it never decides. The two buttons beside it are
+                              still the only way a loan changes status. */}
+                          <button
+                            onClick={() => setScoring(r)}
+                            aria-label="AI credit assessment"
+                            title="AI credit assessment"
+                            className="grid h-8 w-8 place-items-center rounded-full border border-cg-green/30 text-cg-green transition hover:bg-cg-lime/50"
+                          >
+                            <LuBrain size={16} />
+                          </button>
                           <button
                             onClick={() => decide(r.id, "approve")}
                             disabled={busyReq === r.id}
@@ -828,6 +848,10 @@ export default function Loans() {
             Promise.all([loadTop(), loadRepay()]).catch(() => {});
           }}
         />
+      ) : null}
+
+      {scoring ? (
+        <LoanScoreCard loan={scoring} onClose={() => setScoring(null)} />
       ) : null}
     </div>
   );

@@ -79,6 +79,29 @@ public class ChatbotService {
         return str(res.get("summary"));
     }
 
+    // Ask the AI service to review payroll / loan rows and report what looks
+    // wrong. The service reads the rows itself, through the same curated
+    // read-only views as everything else. The raw map is returned as-is so the
+    // caller can validate every flag against the real database before trusting
+    // it -- see AnomalyService.
+    public Map<String, Object> detectAnomalies(String scope, int limit) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("scope", scope);
+        payload.put("limit", limit);
+        return post("/anomalies", payload, 120);
+    }
+
+    // Ask the AI service to judge a loan request. The FACTS are computed by
+    // LoanScoringService from the estate's own records -- the model only forms
+    // an opinion about them, so it can never misreport a figure. Its answer is
+    // advisory; a human still approves or rejects.
+    public Map<String, Object> scoreLoan(Map<String, Object> features, java.math.BigDecimal requestedAmount) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("features", features);
+        payload.put("requested_amount", requestedAmount);
+        return post("/loan-score", payload, 90);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> post(String path, Map<String, Object> payload, int timeoutSeconds) {
         try {

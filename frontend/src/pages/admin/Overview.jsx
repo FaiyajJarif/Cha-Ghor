@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -20,15 +21,8 @@ import {
   Radar,
   PolarGrid,
   PolarAngleAxis,
-  PolarRadiusAxis,
 } from "recharts";
 import {
-  LuSun,
-  LuCloud,
-  LuCloudRain,
-  LuCloudSun,
-  LuDroplets,
-  LuWind,
   LuTrophy,
   LuUsers,
   LuUserCheck,
@@ -36,36 +30,28 @@ import {
   LuWallet,
   LuActivity,
 } from "react-icons/lu";
+import api from "../../api/client";
+import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import {
-  KPIS,
   LEAF_TREND,
-  ATTENDANCE_BY_ZONE,
-  PAYROLL_STATUS,
   ZONE_PRODUCTION,
   WORKER_LEADERBOARD,
-  WEATHER,
-  FINANCIALS,
-  HEALTH_SCORE,
 } from "../../lib/adminSample";
 
 const GREEN = "#3f8f43";
 const PIE_COLORS = ["#a9b263", "#5c796c", "#49921c", "#3f8f43"];
-const WEATHER_ICON = {
-  sun: LuSun,
-  cloud: LuCloud,
-  rain: LuCloudRain,
-  cloudsun: LuCloudSun,
-};
 const MEDAL = ["#f5c518", "#b8c0c8", "#cd7f32"];
 
-// Each KPI card gets an icon (keyed off the sample data key).
 const KPI_ICON = {
   workers: LuUsers,
   present: LuUserCheck,
   leaf: LuLeaf,
   payroll: LuWallet,
 };
+
+const taka = (n) =>
+  "৳ " + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
 function Card({ children, className = "" }) {
   return (
@@ -77,37 +63,257 @@ function Card({ children, className = "" }) {
   );
 }
 
-// Chart header with a title on the left and an "i" info tooltip on the right.
-function CardHead({ title, info }) {
+// Marks a card that is still rendering adminSample data rather than live API
+// data, so nobody mistakes one for the other during a demo.
+function SampleTag() {
+  return (
+    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 ring-1 ring-amber-200">
+      Sample
+    </span>
+  );
+}
+
+function CardHead({ title, info, sample = false }) {
   return (
     <div className="mb-4 flex items-center justify-between gap-2">
-      <h2 className="font-bold text-cg-ink">{title}</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="font-bold text-cg-ink">{title}</h2>
+        {sample && <SampleTag />}
+      </div>
       <InfoTip text={info} />
     </div>
   );
 }
 
+// Shown in place of a chart when the API returned nothing at all. Empty is a
+// legitimate answer here (nobody has marked attendance yet), so we say that
+// rather than drawing an empty axis that looks broken.
+function Empty({ children }) {
+  return (
+    <div className="grid h-[280px] place-items-center px-6 text-center text-sm text-cg-ink/50">
+      {children}
+    </div>
+  );
+}
+
+// 0-100 financial health score, derived from real ledger figures.
+//
+//   60%  margin      netProfit / totalRevenue, where a 30% margin scores full
+//   40%  liquidity   cashOnHand / monthly burn, where 3 months' cover scores full
+//
+// Deliberately simple and stated in the InfoTip, so the number can be defended
+// when someone asks how it is calculated. Returns null when there is not enough
+// data to say anything honest.
+function healthScore(summary, trend) {
+  if (!summary) return null;
+  const revenue = Number(summary.totalRevenue || 0);
+  const profit = Number(summary.netProfit || 0);
+  const cash = Number(summary.cashOnHand || 0);
+  if (revenue <= 0) return null;
+
+  const margin = profit / revenue;
+  const marginPart = Math.max(0, Math.min(margin / 0.3, 1));
+
+  // Monthly burn = the most recent month's expense in the trend series.
+  const lastMonth = trend.length ? Number(trend[trend.length - 1].expense || 0) : 0;
+  const liquidityPart =
+    lastMonth > 0 ? Math.max(0, Math.min(cash / lastMonth / 3, 1)) : 0;
+
+  return Math.round(60 * marginPart + 40 * liquidityPart);
+}
+
+function healthLabel(score) {
+  if (score === null) return "Not enough data yet";
+  if (score >= 75) return "Healthy — margins and cash cover are strong";
+  if (score >= 50) return "Adequate — watch margin or cash cover";
+  return "Under strain — margin or cash cover is thin";
+}
+
 export default function Overview() {
+  const [workers, setWorkers] = useState([]);
+  const [attendance, setAttendance] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [payroll, setPayroll] = useState(null);
+  const [finance, setFinance] = useState(null);
+  const [trend, setTrend] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    const [w, a, m, p, f, t] = await Promise.all([
+      api.get("/workers"),
+      api.get("/attendance"), // no date param = today
+      api.get("/workers/meta"),
+      api.get("/payroll/summary"),
+      api.get("/finance/summary"),
+      api.get("/finance/trend", { params: { months: 6 } }),
+    ]);
+    setWorkers(w.data || []);
+    setAttendance(a.data || []);
+    setZones(m.data?.zones || []);
+    setPayroll(p.data);
+    setFinance(f.data);
+    setTrend(t.data || []);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    load()
+      .catch(
+        (err) =>
+          active &&
+          setError(
+            apiError(
+              err,
+              "Could not load the dashboard. Make sure the backend is running and you're signed in as admin or supervisor.",
+            ),
+          ),
+      )
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  const activeWorkers = useMemo(
+    () => workers.filter((w) => String(w.status).toLowerCase() === "active"),
+    [workers],
+  );
+
+  const presentCount = useMemo(
+    () => attendance.filter((a) => a.status === "present").length,
+    [attendance],
+  );
+
+  const attendancePct =
+    activeWorkers.length > 0
+      ? Math.round((presentCount / activeWorkers.length) * 100)
+      : 0;
+
+  // KPI cards. `leaf` is still sample: nothing writes to leaf_collection until
+  // the supervisor weigh-in screen exists, so a live value would always be 0.
+  const kpis = useMemo(
+    () => [
+      {
+        key: "workers",
+        label: "Active workers",
+        value: activeWorkers.length,
+        delta: `${workers.length} on the roll`,
+        sample: false,
+      },
+      {
+        key: "present",
+        label: "Present today",
+        value: `${presentCount} / ${activeWorkers.length}`,
+        delta: attendance.length
+          ? `${attendancePct}% attendance`
+          : "Not marked yet today",
+        sample: false,
+      },
+      {
+        key: "leaf",
+        label: "Leaf today (kg)",
+        value: 2940,
+        delta: "Awaiting supervisor weigh-in",
+        sample: true,
+      },
+      {
+        key: "payroll",
+        label: "Payroll this cycle",
+        value: payroll ? taka(payroll.totalNet) : "—",
+        delta: payroll
+          ? `${payroll.count} payslips · ${payroll.paid} paid`
+          : "No cycle generated",
+        sample: false,
+      },
+    ],
+    [activeWorkers, workers, presentCount, attendance, attendancePct, payroll],
+  );
+
+  const payrollStatus = useMemo(() => {
+    if (!payroll) return [];
+    return [
+      { name: "Draft", value: payroll.draft },
+      { name: "Review", value: payroll.review },
+      { name: "Approved", value: payroll.approved },
+      { name: "Paid", value: payroll.paid },
+    ].filter((d) => d.value > 0);
+  }, [payroll]);
+
+  // Chart axis is labelled ৳'000, so scale the real figures to thousands.
+  const financials = useMemo(
+    () =>
+      trend.map((p) => ({
+        month: p.month,
+        revenue: Number(p.revenue || 0) / 1000,
+        cost: Number(p.expense || 0) / 1000,
+        profit: Number(p.profit || 0) / 1000,
+      })),
+    [trend],
+  );
+
+  // Today's attendance grouped by zone, for the radar. Zone labels come from
+  // /workers/meta; a row with no zone is bucketed as "Unassigned".
+  const attendanceByZone = useMemo(() => {
+    if (!attendance.length) return [];
+    const labels = new Map(zones.map((z) => [z.id, z.label]));
+    const buckets = new Map();
+    for (const a of attendance) {
+      const key = a.zoneId ?? "none";
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          zone: labels.get(a.zoneId) || "Unassigned",
+          present: 0,
+          absent: 0,
+        });
+      }
+      const b = buckets.get(key);
+      if (a.status === "present") b.present += 1;
+      else b.absent += 1;
+    }
+    return [...buckets.values()];
+  }, [attendance, zones]);
+
+  const score = useMemo(() => healthScore(finance, trend), [finance, trend]);
+  const healthData = [{ name: "Health", value: score ?? 0, fill: GREEN }];
   const maxKg = Math.max(...WORKER_LEADERBOARD.map((w) => w.kg));
-  const CurrentIcon = WEATHER_ICON[WEATHER.icon] || LuCloudSun;
-  const healthData = [{ name: "Health", value: HEALTH_SCORE, fill: GREEN }];
+
+  if (loading) {
+    return (
+      <div className="grid h-64 place-items-center text-sm text-cg-ink/60">
+        {"Loading dashboard…"}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="rounded-xl bg-rose-50 px-4 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+          {error}
+        </div>
+      )}
+
       <div className="rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
-        Showing <b>sample data</b> to lay out the structure — each card gets
-        wired to its API in the coming slices.
+        Cards marked <b>Sample</b> still show placeholder numbers. They all
+        depend on leaf collection, and nothing writes to it until the supervisor
+        weigh-in screen is built. Everything else on this page is live.
       </div>
 
-      {/* KPI cards — each with an icon */}
+      {/* KPI cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {KPIS.map((k) => {
+        {kpis.map((k) => {
           const Icon = KPI_ICON[k.key] || LuActivity;
           return (
             <Card key={k.key}>
               <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-cg-ink/60">{k.label}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-cg-ink/60">{k.label}</p>
+                    {k.sample && <SampleTag />}
+                  </div>
                   <p className="mt-1 text-2xl font-extrabold text-cg-ink">
                     {k.value}
                   </p>
@@ -122,12 +328,13 @@ export default function Overview() {
         })}
       </div>
 
-      {/* Leaf trend (area) + payroll status (donut) */}
+      {/* Leaf trend (sample) + payroll status (live) */}
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHead
             title="Leaf collected — last 7 days (kg)"
-            info="Total green leaf plucked across all zones for each of the last 7 days, in kilograms. Use it to spot daily dips."
+            sample
+            info="Placeholder figures. Total green leaf plucked across all zones per day. Goes live once the supervisor weigh-in screen writes to leaf_collection."
           />
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={LEAF_TREND}>
@@ -155,30 +362,38 @@ export default function Overview() {
         <Card>
           <CardHead
             title="Payroll status"
-            info="How many payroll runs are in each stage — Draft, Review, Approved, Paid — for the current cycle."
+            info="How many payslips sit in each stage — Draft, Review, Approved, Paid — for the current cycle."
           />
-          <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie
-                data={PAYROLL_STATUS}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={55}
-                outerRadius={85}
-                paddingAngle={2}
-              >
-                {PAYROLL_STATUS.map((_, i) => (
-                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                ))}
-              </Pie>
-              <Legend />
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+          {payrollStatus.length === 0 ? (
+            <Empty>
+              {
+                "No payslips for this period yet. Generate a cycle from the Payroll page."
+              }
+            </Empty>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={payrollStatus}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={55}
+                  outerRadius={85}
+                  paddingAngle={2}
+                >
+                  {payrollStatus.map((_, i) => (
+                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Legend />
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </Card>
       </div>
 
-      {/* Profitability & Financial Health */}
+      {/* Profitability & financial health — both live */}
       <div>
         <h2 className="mb-3 text-lg font-extrabold text-cg-ink">
           Profitability &amp; Financial Health
@@ -187,208 +402,131 @@ export default function Overview() {
           <Card className="lg:col-span-2">
             <CardHead
               title="Revenue vs cost (৳ '000) with profit line"
-              info="Monthly revenue and cost bars in thousand Taka, with the profit line on top, so you can track margins over time."
+              info="Monthly revenue and cost in thousand Taka from the finance ledger, with the profit line on top."
             />
-            <ResponsiveContainer width="100%" height={280}>
-              <ComposedChart data={FINANCIALS}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" />
-                <XAxis dataKey="month" fontSize={12} />
-                <YAxis fontSize={12} />
-                <Tooltip />
-                <Legend />
-                <Bar
-                  dataKey="revenue"
-                  name="Revenue"
-                  fill="#49921c"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Bar
-                  dataKey="cost"
-                  name="Cost"
-                  fill="#a9b263"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="profit"
-                  name="Profit"
-                  stroke="#1c3a29"
-                  strokeWidth={2.5}
-                  dot={{ r: 3 }}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
+            {financials.length === 0 ? (
+              <Empty>{"No ledger entries yet."}</Empty>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <ComposedChart data={financials}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" />
+                  <XAxis dataKey="month" fontSize={12} />
+                  <YAxis fontSize={12} />
+                  <Tooltip
+                    formatter={(v) => Number(v).toFixed(1) + "k"}
+                  />
+                  <Legend />
+                  <Bar
+                    dataKey="revenue"
+                    name="Revenue"
+                    fill="#49921c"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="cost"
+                    name="Cost"
+                    fill="#a9b263"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="profit"
+                    name="Profit"
+                    stroke="#1c3a29"
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
           </Card>
 
           <Card>
             <CardHead
               title="Financial health score"
-              info="A single 0–100 score blending margin, cash flow and cost trends. Higher is healthier."
+              info="Derived from the ledger: 60% profit margin (a 30% margin scores full marks) plus 40% liquidity (cash on hand divided by the latest month's expense, where 3 months' cover scores full marks)."
             />
-            <div className="relative">
-              <ResponsiveContainer width="100%" height={220}>
-                <RadialBarChart
-                  innerRadius="70%"
-                  outerRadius="100%"
-                  data={healthData}
-                  startAngle={90}
-                  endAngle={-270}
-                >
-                  <PolarAngleAxis
-                    type="number"
-                    domain={[0, 100]}
-                    tick={false}
-                  />
-                  <RadialBar background dataKey="value" cornerRadius={12} />
-                </RadialBarChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-extrabold text-cg-ink">
-                  {HEALTH_SCORE}
-                </span>
-                <span className="text-xs text-cg-ink/60">out of 100</span>
-              </div>
-            </div>
-            <p className="mt-1 text-center text-sm text-cg-green">
-              Healthy — margins stable
-            </p>
+            {score === null ? (
+              <Empty>{"Not enough ledger data to score yet."}</Empty>
+            ) : (
+              <>
+                <div className="relative">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <RadialBarChart
+                      innerRadius="70%"
+                      outerRadius="100%"
+                      data={healthData}
+                      startAngle={90}
+                      endAngle={-270}
+                    >
+                      <PolarAngleAxis
+                        type="number"
+                        domain={[0, 100]}
+                        tick={false}
+                      />
+                      <RadialBar background dataKey="value" cornerRadius={12} />
+                    </RadialBarChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-4xl font-extrabold text-cg-ink">
+                      {score}
+                    </span>
+                    <span className="text-xs text-cg-ink/60">out of 100</span>
+                  </div>
+                </div>
+                <p className="mt-1 text-center text-sm text-cg-green">
+                  {healthLabel(score)}
+                </p>
+              </>
+            )}
           </Card>
         </div>
       </div>
 
-      {/* Weather + Leaderboard */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHead
-            title="Weather status"
-            info="Current weather at the estate plus a 4-day outlook, to help plan plucking and drying."
-          />
-          <div className="mt-1 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CurrentIcon size={48} className="text-cg-green" />
-              <div>
-                <p className="text-3xl font-extrabold text-cg-ink">
-                  {WEATHER.tempC}°C
-                </p>
-                <p className="text-sm text-cg-ink/60">{WEATHER.condition}</p>
-              </div>
-            </div>
-            <div className="space-y-1 text-sm text-cg-ink/70">
-              <p className="flex items-center gap-2">
-                <LuDroplets size={15} /> Humidity {WEATHER.humidity}%
-              </p>
-              <p className="flex items-center gap-2">
-                <LuWind size={15} /> Wind {WEATHER.windKmh} km/h
-              </p>
-              <p className="flex items-center gap-2">
-                <LuCloudRain size={15} /> Rain {WEATHER.rainChance}%
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-4 gap-2">
-            {WEATHER.forecast.map((f) => {
-              const Icon = WEATHER_ICON[f.icon] || LuCloudSun;
-              return (
-                <div
-                  key={f.day}
-                  className="rounded-xl bg-cg-lime/50 p-2 text-center"
-                >
-                  <p className="text-xs font-semibold text-cg-ink/70">
-                    {f.day}
-                  </p>
-                  <Icon size={22} className="mx-auto my-1 text-cg-green" />
-                  <p className="text-sm font-bold text-cg-ink">{f.tempC}°</p>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-cg-ink/50">
-            Cha Bot can advise harvest timing from this forecast.
-          </p>
-        </Card>
-
-        <Card>
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <LuTrophy className="text-[#f5c518]" />
-              <h2 className="font-bold text-cg-ink">
-                Worker performance leaderboard
-              </h2>
-            </div>
-            <InfoTip text="Top workers ranked by leaf volume, with a blended score of volume, attendance and leaf grade." />
-          </div>
-          <ul className="space-y-3">
-            {WORKER_LEADERBOARD.map((w, i) => (
-              <li key={w.name} className="flex items-center gap-3">
-                <span
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold text-white"
-                  style={{ background: MEDAL[i] || "#5c796c" }}
-                >
-                  {i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-semibold text-cg-ink">
-                      {w.name}{" "}
-                      <span className="text-cg-ink/40">· {w.zone}</span>
-                    </span>
-                    <span className="text-cg-ink/60">{w.kg} kg</span>
-                  </div>
-                  <div className="mt-1 h-2 w-full rounded-full bg-cg-lime">
-                    <div
-                      className="h-2 rounded-full bg-cg-green"
-                      style={{ width: `${(w.kg / maxKg) * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <span className="w-8 shrink-0 text-right text-xs font-semibold text-cg-green">
-                  {w.score}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs text-cg-ink/50">
-            Score blends leaf volume, attendance and grade.
-          </p>
-        </Card>
-      </div>
-
-      {/* Attendance (radar) + production (horizontal bar) */}
+      {/* Attendance by zone (live) + production by zone (sample) */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHead
             title="Attendance by zone (today)"
-            info="Present vs absent workers in each zone today, so you can see which zones are short-staffed."
+            info="Present vs absent workers in each zone today, from the attendance register, so you can see which zones are short-staffed."
           />
-          <ResponsiveContainer width="100%" height={280}>
-            <RadarChart data={ATTENDANCE_BY_ZONE}>
-              <PolarGrid stroke="#e5efe0" />
-              <PolarAngleAxis dataKey="zone" fontSize={12} />
-              <PolarRadiusAxis fontSize={10} />
-              <Radar
-                name="Present"
-                dataKey="present"
-                stroke={GREEN}
-                fill={GREEN}
-                fillOpacity={0.5}
-              />
-              <Radar
-                name="Absent"
-                dataKey="absent"
-                stroke="#d98b8b"
-                fill="#d98b8b"
-                fillOpacity={0.4}
-              />
-              <Legend />
-              <Tooltip />
-            </RadarChart>
-          </ResponsiveContainer>
+          {attendanceByZone.length === 0 ? (
+            <Empty>
+              {
+                "Attendance has not been marked today. Once a supervisor marks the register, this fills in."
+              }
+            </Empty>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={attendanceByZone}>
+                <PolarGrid stroke="#e5efe0" />
+                <PolarAngleAxis dataKey="zone" fontSize={12} />
+                <Radar
+                  name="Present"
+                  dataKey="present"
+                  stroke={GREEN}
+                  fill={GREEN}
+                  fillOpacity={0.5}
+                />
+                <Radar
+                  name="Absent"
+                  dataKey="absent"
+                  stroke="#d98b8b"
+                  fill="#d98b8b"
+                  fillOpacity={0.4}
+                />
+                <Legend />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          )}
         </Card>
 
         <Card>
           <CardHead
             title="Production by zone (kg)"
-            info="Total leaf produced per zone today in kilograms, to compare zone output at a glance."
+            sample
+            info="Placeholder figures. Total leaf produced per zone today. Goes live once the supervisor weigh-in screen writes to leaf_collection."
           />
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={ZONE_PRODUCTION} layout="vertical">
@@ -401,6 +539,52 @@ export default function Overview() {
           </ResponsiveContainer>
         </Card>
       </div>
+
+      {/* Leaderboard (sample) */}
+      <Card>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <LuTrophy className="text-[#f5c518]" />
+            <h2 className="font-bold text-cg-ink">
+              Worker performance leaderboard
+            </h2>
+            <SampleTag />
+          </div>
+          <InfoTip text="Placeholder figures. Ranks workers by leaf volume with a blended score of volume, attendance and grade. Goes live once the supervisor weigh-in screen writes to leaf_collection." />
+        </div>
+        <ul className="space-y-3">
+          {WORKER_LEADERBOARD.map((w, i) => (
+            <li key={w.name} className="flex items-center gap-3">
+              <span
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold text-white"
+                style={{ background: MEDAL[i] || "#5c796c" }}
+              >
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-cg-ink">
+                    {w.name} <span className="text-cg-ink/40">· {w.zone}</span>
+                  </span>
+                  <span className="text-cg-ink/60">{w.kg} kg</span>
+                </div>
+                <div className="mt-1 h-2 w-full rounded-full bg-cg-lime">
+                  <div
+                    className="h-2 rounded-full bg-cg-green"
+                    style={{ width: `${(w.kg / maxKg) * 100}%` }}
+                  />
+                </div>
+              </div>
+              <span className="w-8 shrink-0 text-right text-xs font-semibold text-cg-green">
+                {w.score}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-xs text-cg-ink/50">
+          Score blends leaf volume, attendance and grade.
+        </p>
+      </Card>
     </div>
   );
 }
