@@ -14,11 +14,32 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
     // One-row rollup for the six KPI cards, computed in a single scan with
     // FILTER. Aliases are quoted so the column labels match the projection
     // getters exactly (Postgres would otherwise lower-case them).
+    //
+    // cashOnHand: `loan_in` is NOT unconditionally an inflow. There are two
+    // kinds of loan repayment and only one of them moves cash:
+    //   * recorded by hand in the Loans UI  -> the worker really handed money
+    //     over, cash goes UP.  loan_repayment_entry.payroll_id IS NULL.
+    //   * auto-deducted from a payslip      -> nothing arrived; the estate
+    //     simply paid a smaller wage, and the PAYROLL row already carries that
+    //     reduced netPayable. Counting it again credits the same taka twice.
+    //     loan_repayment_entry.payroll_id IS NOT NULL (stamped in V20).
+    // So a wage-deducted repayment is cash-NEUTRAL here, not an inflow.
+    // Amounts stay positive (chk_finance_amount_nonneg, V14); direction still
+    // comes from category + source_type, never from a sign.
+    // A loan_in row with no matching repayment row (orphan) keeps the old
+    // inflow behaviour -- we only neutralise when payroll_id is positively set.
     @Query(value = """
         SELECT
           COALESCE(SUM(amount) FILTER (WHERE category = 'REVENUE'), 0) AS \"totalRevenue\",
           COALESCE(SUM(amount) FILTER (WHERE category IN ('EXPENSE','PAYROLL')), 0) AS \"totalExpenses\",
-          COALESCE(SUM(CASE WHEN category = 'REVENUE' OR COALESCE(source_type, '') = 'loan_in' THEN amount ELSE -amount END)
+          COALESCE(SUM(CASE
+                   WHEN category = 'REVENUE' THEN amount
+                   WHEN COALESCE(source_type, '') = 'loan_in' THEN
+                        CASE WHEN EXISTS (SELECT 1 FROM loan_repayment_entry r
+                                           WHERE r.id = finance_ledger.source_id
+                                             AND r.payroll_id IS NOT NULL)
+                             THEN 0 ELSE amount END
+                   ELSE -amount END)
                    FILTER (WHERE status = 'SETTLED'), 0) AS \"cashOnHand\",
           COALESCE(SUM(amount) FILTER (
                    WHERE status = 'PENDING'
@@ -95,12 +116,18 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
     Page<FinanceEntry> activity(@Param("kind") String kind, Pageable pageable);
 
     // Footer totals for the same filtered feed: cash out vs capital back in.
+    // `totalIn` counts only repayments that actually brought cash in, on the
+    // same rule as cashOnHand above -- a wage-deducted repayment is in neither
+    // total, because the PAYROLL row already carries the reduced netPayable.
     @Query(value = """
         SELECT
           COALESCE(SUM(amount) FILTER (
             WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out')), 0) AS \"totalOut\",
           COALESCE(SUM(amount) FILTER (
-            WHERE COALESCE(source_type, '') = 'loan_in'), 0) AS \"totalIn\"
+            WHERE COALESCE(source_type, '') = 'loan_in'
+              AND NOT EXISTS (SELECT 1 FROM loan_repayment_entry r
+                               WHERE r.id = finance_ledger.source_id
+                                 AND r.payroll_id IS NOT NULL)), 0) AS \"totalIn\"
         FROM finance_ledger
         WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out','loan_in')
           AND (:kind = '' OR COALESCE(source_type, '') = :kind)

@@ -25,9 +25,14 @@ public class FinanceService {
     private static final int BREAKDOWN_SLICES = 5; // top N accounts, rest -> "Other"
 
     private final FinanceRepository repo;
+    // Read-only: lets the activity feed tell a cash repayment from one that was
+    // deducted from wages (payroll_id set). Same rule the cashOnHand rollup uses.
+    private final com.chaghor.chaghor.loan.LoanRepaymentEntryRepository repaymentRepository;
 
-    public FinanceService(FinanceRepository repo) {
+    public FinanceService(FinanceRepository repo,
+                          com.chaghor.chaghor.loan.LoanRepaymentEntryRepository repaymentRepository) {
         this.repo = repo;
+        this.repaymentRepository = repaymentRepository;
     }
 
     public FinanceSummaryResponse summary() {
@@ -221,8 +226,15 @@ public class FinanceService {
         int s = size <= 0 ? 10 : Math.min(size, 200);
         String k = blank(kind);
         Page<FinanceEntry> result = repo.activity(k, PageRequest.of(p, s));
+        // One extra query per page: of the loan_in rows on this page, which came
+        // out of a payslip rather than out of the worker's pocket.
+        java.util.Set<Long> wageDeducted = wageDeductedRepaymentIds(result.getContent());
         List<ActivityEntryResponse> entries = result.getContent().stream()
-                .map(ActivityEntryResponse::from).toList();
+                .map(e -> ActivityEntryResponse.from(e,
+                        "loan_in".equals(e.getSourceType())
+                                && e.getSourceId() != null
+                                && wageDeducted.contains(e.getSourceId())))
+                .toList();
         var totals = repo.activityTotals(k);
         return new ActivityPageResponse(entries, p, s,
                 result.getTotalElements(), result.getTotalPages(),
@@ -231,6 +243,26 @@ public class FinanceService {
     }
 
     // ---- helpers ----
+
+    // For the loan_in rows in this page, source_id is the loan_repayment_entry
+    // id. Returns the subset whose repayment carries a payroll_id, i.e. it was
+    // recovered from a payslip and moved no cash.
+    private java.util.Set<Long> wageDeductedRepaymentIds(List<FinanceEntry> rows) {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        for (FinanceEntry e : rows) {
+            if ("loan_in".equals(e.getSourceType()) && e.getSourceId() != null) {
+                ids.add(e.getSourceId());
+            }
+        }
+        if (ids.isEmpty()) {
+            return java.util.Set.of();
+        }
+        java.util.Set<Long> out = new java.util.HashSet<>();
+        repaymentRepository.findByIdInAndPayrollIdIsNotNull(ids)
+                .forEach(r -> out.add(r.getId()));
+        return out;
+    }
+
     private static BigDecimal nz(BigDecimal v) {
         return v == null ? BigDecimal.ZERO : v;
     }

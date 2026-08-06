@@ -359,6 +359,12 @@ const KIND_META = {
   WITHDRAWAL: { label: "Withdrawal", cls: "bg-amber-100 text-amber-800" },
   LOAN_OUT: { label: "Loan out", cls: "bg-rose-100 text-rose-700" },
   LOAN_IN: { label: "Loan repaid", cls: "bg-emerald-100 text-emerald-700" },
+  // Recovered from a payslip, not paid in cash: the loan balance moved but no
+  // money did, so it is deliberately not coloured as an inflow.
+  LOAN_IN_WAGE: {
+    label: "Loan repaid (wages)",
+    cls: "bg-cg-green/10 text-cg-ink/70",
+  },
   OTHER: { label: "Other", cls: "bg-cg-green/10 text-cg-ink/70" },
 };
 
@@ -1044,6 +1050,9 @@ export default function Finance() {
               ) : (
                 activity.entries.map((e) => {
                   const isIn = e.direction === "IN";
+                  // NEUTRAL = loan repaid out of wages. No cash moved, so it
+                  // gets no +/- and no red/green.
+                  const isNeutral = e.direction === "NEUTRAL";
                   return (
                     <tr key={e.id} className="hover:bg-cg-lime/20">
                       <td className="whitespace-nowrap px-5 py-4 text-cg-ink/80">
@@ -1061,16 +1070,20 @@ export default function Finance() {
                       </td>
                       <td
                         className={`whitespace-nowrap px-5 py-4 text-right font-bold ${
-                          isIn ? "text-emerald-600" : "text-rose-600"
+                          isNeutral
+                            ? "text-cg-ink/50"
+                            : isIn
+                              ? "text-emerald-600"
+                              : "text-rose-600"
                         }`}
                       >
                         <span className="inline-flex items-center gap-1">
-                          {isIn ? (
+                          {isNeutral ? null : isIn ? (
                             <LuArrowDownRight size={14} />
                           ) : (
                             <LuArrowUpRight size={14} />
                           )}
-                          {isIn ? "+" : "-"}
+                          {isNeutral ? "" : isIn ? "+" : "-"}
                           {taka(e.amount)}
                         </span>
                       </td>

@@ -2,6 +2,7 @@ package com.chaghor.chaghor.loan;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 
 public interface LoanRepaymentEntryRepository extends JpaRepository<LoanRepaymentEntry, Long> {
@@ -10,4 +11,10 @@ public interface LoanRepaymentEntryRepository extends JpaRepository<LoanRepaymen
 
     // v10 idempotency guard for the automatic payslip deduction.
     boolean existsByLoanIdAndPayrollId(Long loanId, Long payrollId);
+
+    // Which of these repayments came out of a payslip rather than out of the
+    // worker's pocket. payroll_id is set only by LoanService.recoverFromPayslip;
+    // a repayment typed into the Loans UI leaves it null (see V20). The Finance
+    // activity feed uses this to avoid badging a wage deduction as cash coming in.
+    List<LoanRepaymentEntry> findByIdInAndPayrollIdIsNotNull(Collection<Long> ids);
 }
