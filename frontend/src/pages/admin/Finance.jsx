@@ -36,6 +36,7 @@ import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
+import AnomalyPanel from "../../components/admin/AnomalyPanel";
 
 const PAGE_SIZE = 10;
 const ACT_PAGE_SIZE = 8; // Money Movement feed
@@ -568,20 +569,9 @@ export default function Finance() {
         />
       </div>
 
-      {/* AI insight (planned) */}
-      <div className="flex items-start gap-3 rounded-2xl border border-dashed border-cg-green/30 bg-white p-4">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green">
-          🤖
-        </span>
-        <div className="text-sm text-cg-ink/70">
-          <span className="font-semibold text-cg-ink">
-            AI (planned): fraud &amp; anomaly flags.
-          </span>{" "}
-          The assistant will scan the ledger for duplicate references, unusual
-          spikes and off-pattern spending, and surface them here for review.
-          Wired once the AI service is live.
-        </div>
-      </div>
+      {/* AI anomaly flags — live. Scans the ledger for duplicate spend,
+          off-pattern amounts and overdue payables. */}
+      <AnomalyPanel scope="finance" title="AI anomaly flags — ledger" />
 
       {/* Charts: cashflow trends (left) + expense pie (right) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

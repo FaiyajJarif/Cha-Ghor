@@ -3,6 +3,8 @@ package com.chaghor.chaghor.anomaly;
 import com.chaghor.chaghor.anomaly.dto.AnomalyFlagResponse;
 import com.chaghor.chaghor.anomaly.dto.AnomalyScanResponse;
 import com.chaghor.chaghor.chatbot.ChatbotService;
+import com.chaghor.chaghor.finance.FinanceEntry;
+import com.chaghor.chaghor.finance.FinanceRepository;
 import com.chaghor.chaghor.loan.Loan;
 import com.chaghor.chaghor.loan.LoanRepository;
 import com.chaghor.chaghor.payroll.Payroll;
@@ -38,20 +40,21 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AnomalyService {
 
-    private static final Set<String> SCOPES = Set.of("payroll", "loan");
+    private static final Set<String> SCOPES = Set.of("payroll", "loan", "finance");
     private static final int REVIEW_LIMIT = 100;
 
     private final ChatbotService chatbotService;
     private final PayrollRepository payrollRepository;
     private final LoanRepository loanRepository;
     private final WorkerRepository workerRepository;
+    private final FinanceRepository financeRepository;
 
     @Transactional(readOnly = true)
     public AnomalyScanResponse scan(String scope) {
         String s = scope == null ? "" : scope.trim().toLowerCase();
         if (!SCOPES.contains(s)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Scope must be either payroll or loan.");
+                    "Scope must be one of: payroll, loan, finance.");
         }
 
         Map<String, Object> res;
@@ -64,7 +67,11 @@ public class AnomalyService {
         }
 
         // Real ids and labels, straight from our database.
-        Map<Long, String> labels = "payroll".equals(s) ? payrollLabels() : loanLabels();
+        Map<Long, String> labels = switch (s) {
+            case "payroll" -> payrollLabels();
+            case "loan" -> loanLabels();
+            default -> financeLabels();
+        };
 
         List<AnomalyFlagResponse> flags = new ArrayList<>();
         int discarded = intOf(res.get("dropped"));
@@ -123,6 +130,15 @@ public class AnomalyService {
         for (Loan l : loanRepository.findAll()) {
             String ref = isBlank(l.getReference()) ? "No reference" : l.getReference();
             out.put(l.getId(), ref + " · " + l.getWorkerName());
+        }
+        return out;
+    }
+
+    private Map<Long, String> financeLabels() {
+        Map<Long, String> out = new HashMap<>();
+        for (FinanceEntry e : financeRepository.findAll()) {
+            String ref = isBlank(e.getRefId()) ? "" : e.getRefId() + " · ";
+            out.put(e.getId(), ref + e.getAccount() + " · " + e.getEntryDate());
         }
         return out;
     }

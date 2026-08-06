@@ -204,9 +204,18 @@ _ANOMALY_SQL = {
          ORDER BY loan_id DESC
          LIMIT {limit}
     """,
+    # Ordered by date so near-duplicate spend lands next to its twin, which is
+    # what makes a double payment visible at all.
+    "finance": """
+        SELECT ledger_id, entry_date, ref_id, category, account, amount,
+               status, due_date, note
+          FROM view_finance
+         ORDER BY entry_date DESC, ledger_id DESC
+         LIMIT {limit}
+    """,
 }
 
-_ANOMALY_ID = {"payroll": "payroll_id", "loan": "loan_id"}
+_ANOMALY_ID = {"payroll": "payroll_id", "loan": "loan_id", "finance": "ledger_id"}
 
 _ANOMALY_SYSTEM = """You are a financial controls reviewer for a Bangladeshi tea estate.
 You are given ROWS (JSON) from the estate's SCOPE_PLACEHOLDER records. Identify rows that
@@ -219,6 +228,10 @@ Things that matter on a tea estate:
 - loan: repaid greater than principal; an active loan whose daily deduction is zero, so it
   can never be recovered from wages; outstanding that does not equal principal minus repaid;
   a loan approved but never given a reference.
+- finance: the same account charged the same amount twice within a few days, which usually
+  means a supplier was paid twice; an amount far out of line with what that same account
+  normally costs; a PENDING entry whose due date has already passed; a REVENUE entry that
+  looks like a cost, or an EXPENSE that looks like income, judging by the account name.
 
 Rules, all mandatory:
 - Return ONLY a JSON array. No prose, no markdown fences, no commentary.
