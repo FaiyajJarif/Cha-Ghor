@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -60,7 +61,10 @@ public class WorkerService {
 
     @Transactional
     public WorkerResponse create(WorkerRequest req) {
-        if (req.phone() != null && !req.phone().isBlank() && workerRepository.existsByPhone(req.phone())) {
+        // Only LIVE workers block a phone number. A retired worker must not stop
+        // their number being reused by whoever takes over the handset.
+        if (req.phone() != null && !req.phone().isBlank()
+                && workerRepository.existsByPhoneAndDeletedAtIsNull(req.phone())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A worker with that phone already exists");
         }
         Long userId = maybeCreateLogin(req);
@@ -108,11 +112,24 @@ public class WorkerService {
     }
 
     @Transactional
+    // Soft delete. The row is kept and stamped, not removed.
+    //
+    // Two reasons. First, it has to work at all: V14 put RESTRICT foreign keys
+    // on payroll, loan and withdrawal_request, so deleteById() on anyone who has
+    // ever been paid failed on a database constraint. Second, it has to stay
+    // auditable: erasing a worker would orphan every payslip and loan that names
+    // them, and this system exists to keep money traceable.
+    //
+    // After this the worker disappears from the Workforce list and from payroll
+    // generation, but their history still resolves to their name.
     public void delete(Long id) {
-        if (!workerRepository.existsById(id)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Worker not found");
+        Worker w = workerRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Worker not found"));
+        if (w.getDeletedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That worker has already been removed.");
         }
-        workerRepository.deleteById(id);
+        w.setDeletedAt(OffsetDateTime.now());
+        workerRepository.save(w);
     }
 
     @Transactional(readOnly = true)

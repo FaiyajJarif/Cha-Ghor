@@ -68,4 +68,28 @@ public class Worker {
 
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
+
+    // Soft delete (column added in V15, wired here).
+    //
+    // NULL  = a live worker.
+    // set   = retired; hidden from every list, but the row survives so their
+    //         payslips, loans and withdrawals still resolve to a real name.
+    //
+    // This is not tidiness. V14 put RESTRICT foreign keys on payroll, loan and
+    // withdrawal_request, so a hard DELETE of anyone who has ever been paid
+    // fails on a constraint. Stamping this column is what lets an estate retire
+    // a worker at all, without erasing the wage history that has to be
+    // auditable.
+    //
+    // SCOPE NOTE: V15 added deleted_at to five tables -- workers, loan, payroll,
+    // finance_ledger and withdrawal_request. Only THIS one is wired. The other
+    // four have no delete endpoint, so nothing can ever set their column;
+    // filtering their queries would be pure risk against the money rollups for
+    // no behavioural change (finance_ledger alone has 10 native queries and 16
+    // repository methods). If one of those tables ever gains a delete, wire it
+    // then -- and filter view_finance / view_loan / view_payroll at the same
+    // time, or Cha Bot will disagree with the Finance page. Until then, those
+    // rows are protected by V14's RESTRICT foreign keys, not by this column.
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 }

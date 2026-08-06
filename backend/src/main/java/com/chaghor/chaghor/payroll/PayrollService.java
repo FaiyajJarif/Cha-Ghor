@@ -131,7 +131,10 @@ public class PayrollService {
     public List<PayrollResponse> generate(LocalDate start, LocalDate end) {
         LocalDate[] period = resolve(start, end);
         PayrollConfig cfg = currentConfig();
-        for (Worker w : workerRepository.findAll()) {
+        // Live workers only: a retired worker (deleted_at stamped) must never be
+        // issued a NEW payslip. Their existing ones are untouched -- this is the
+        // "who works here now" question, not "whose history is this".
+        for (Worker w : workerRepository.findByDeletedAtIsNull()) {
             if (!"active".equalsIgnoreCase(w.getStatus())) {
                 continue;
             }
@@ -483,6 +486,9 @@ public class PayrollService {
         return userRepository.findByUsername(username).map(User::getId).orElse(null);
     }
 
+    // Deliberately findAll(), NOT live-only: this resolves worker names for
+    // payslips that already exist. A retired worker's old payslip must still
+    // show their name rather than "Worker #7".
     private Map<Long, Worker> workerMap() {
         Map<Long, Worker> m = new HashMap<>();
         workerRepository.findAll().forEach(w -> m.put(w.getId(), w));
