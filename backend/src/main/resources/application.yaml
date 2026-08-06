@@ -1,0 +1,62 @@
+# backend/src/main/resources/application.yaml
+spring:
+  application:
+    name: cha-ghor-backend
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/chaghor}   # host port 5433 (5432 is busy)
+    username: ${DB_USERNAME:chaghor}
+    password: ${DB_PASSWORD:chaghor_dev_pw}   # override in every real environment
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate      # Flyway owns the schema; Hibernate only validates
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    enabled: true             # runs V1__init.sql on startup
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8080
+  error:
+    include-message: on_param        # only echo the exception message when ?message=... is passed
+    include-stacktrace: never        # never leak stack traces to clients
+    include-binding-errors: never    # validation details come from GlobalExceptionHandler instead
+
+# App-specific config
+app:
+  jwt:
+    # Dev default is long enough for HS384. ALWAYS override with APP_JWT_SECRET in
+    # staging/production, and rotate it if it ever leaks.
+    secret: ${APP_JWT_SECRET:dev-only-chaghor-secret-a1b2c3d4e5f60718293a4b5c6d7e8f90}
+    expiration-ms: ${APP_JWT_EXPIRATION_MS:86400000}   # 24h
+  ai:
+    service:
+      url: ${AI_SERVICE_URL:http://127.0.0.1:8000}   # FIXED: now correctly nested under app.ai.service.url
+  cors:
+    # Comma-separated browser origins allowed to call the API.
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  # Estate warehouse shown on the Supply Chain live map.
+  warehouse:
+    name: Chaghor Central Warehouse - Srimangal
+    lat: 24.3065
+    lng: 91.7296
+
+logging:
+  level:
+    # Dialed down from DEBUG/TRACE: those leak tokens, headers, and auth internals
+    # into logs. Raise temporarily only when debugging auth locally.
+    org.springframework.security: INFO
+    org.springframework.security.web: INFO

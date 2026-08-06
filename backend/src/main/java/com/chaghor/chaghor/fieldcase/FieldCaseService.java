@@ -1,0 +1,195 @@
+package com.chaghor.chaghor.fieldcase;
+
+import com.chaghor.chaghor.fieldcase.dto.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.List;
+
+// Business logic for the Reports & Complaints module: the KPI rollup, listing
+// and detail, submitting cases, admin replies, and status changes. The first
+// admin reply stamps firstResponseAt (drives the avg-response KPI) and flips an
+// OPEN case to IN_PROGRESS. Marking RESOLVED stamps resolvedAt.
+@Service
+public class FieldCaseService {
+
+    private final FieldCaseRepository cases;
+    private final CaseReplyRepository replies;
+
+    public FieldCaseService(FieldCaseRepository cases, CaseReplyRepository replies) {
+        this.cases = cases;
+        this.replies = replies;
+    }
+
+    public CaseSummaryResponse summary() {
+        List<FieldCase> all = cases.findAll();
+        long total = all.size();
+        long resolved = all.stream().filter(c -> c.getStatus() == CaseStatus.RESOLVED).count();
+        long active = all.stream()
+                .filter(c -> c.getStatus() == CaseStatus.OPEN || c.getStatus() == CaseStatus.IN_PROGRESS)
+                .count();
+
+        // Average hours from submission to first response, over cases that have
+        // actually been responded to.
+        double avgHours = all.stream()
+                .filter(c -> c.getFirstResponseAt() != null && c.getCreatedAt() != null)
+                .mapToDouble(c -> Duration.between(c.getCreatedAt(), c.getFirstResponseAt()).toMinutes() / 60.0)
+                .average()
+                .orElse(0.0);
+        avgHours = Math.round(avgHours * 10.0) / 10.0;
+
+        double resolutionRate = total == 0 ? 0.0 : Math.round(resolved * 1000.0 / total) / 10.0;
+
+        // Compliance: at-risk when any active case has breached its priority
+        // response window; otherwise stable.
+        OffsetDateTime now = OffsetDateTime.now();
+        boolean breach = all.stream()
+                .filter(c -> c.getStatus() == CaseStatus.OPEN || c.getStatus() == CaseStatus.IN_PROGRESS)
+                .anyMatch(c -> {
+                    if (c.getCreatedAt() == null) return false;
+                    long hours = Duration.between(c.getCreatedAt(), now).toHours();
+                    return switch (c.getPriority()) {
+                        case URGENT -> hours > 8;
+                        case HIGH -> hours > 24;
+                        case MEDIUM -> hours > 72;
+                        case LOW -> hours > 168;
+                    };
+                });
+        String compliance = breach ? "at-risk" : "stable";
+
+        return new CaseSummaryResponse(avgHours, active, resolutionRate, compliance, total, resolved);
+    }
+
+    public List<CaseListItemResponse> list(String type) {
+        List<FieldCase> rows;
+        if (type == null || type.isBlank() || type.equalsIgnoreCase("all")) {
+            rows = cases.findAllByOrderByCreatedAtDesc();
+        } else {
+            rows = cases.findByCaseTypeOrderByCreatedAtDesc(parseType(type));
+        }
+        return rows.stream().map(CaseListItemResponse::from).toList();
+    }
+
+    public CaseDetailResponse detail(Long id) {
+        FieldCase c = getOr404(id);
+        List<CaseReplyResponse> thread = replies.findByCaseIdOrderByCreatedAtAsc(id)
+                .stream().map(CaseReplyResponse::from).toList();
+        return CaseDetailResponse.from(c, thread);
+    }
+
+    public CaseDetailResponse create(CreateCaseRequest req, Long userId, String name, String role) {
+        if (req == null || req.title() == null || req.title().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Title is required");
+        }
+        FieldCase c = FieldCase.builder()
+                .caseType(parseType(req.caseType()))
+                .category(nz(req.category()))
+                .title(req.title().trim())
+                .body(nz(req.body()))
+                .submitterName(name == null ? "" : name)
+                .submitterRole(role == null ? "" : role)
+                .submittedBy(userId)
+                .workerCode(emptyToNull(req.workerCode()))
+                .zone(emptyToNull(req.zone()))
+                .priority(parsePriority(req.priority()))
+                .status(CaseStatus.OPEN)
+                .evidenceUrl(emptyToNull(req.evidenceUrl()))
+                .build();
+        FieldCase saved = cases.save(c);
+        return detail(saved.getId());
+    }
+
+    public CaseDetailResponse reply(Long id, ReplyRequest req, Long userId, String name, String role) {
+        if (req == null || req.body() == null || req.body().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reply body is required");
+        }
+        FieldCase c = getOr404(id);
+        CaseReply r = CaseReply.builder()
+                .caseId(id)
+                .authorName(name == null ? "" : name)
+                .authorRole(role == null ? "" : role)
+                .authorId(userId)
+                .body(req.body().trim())
+                .build();
+        replies.save(r);
+
+        // First response stamps the KPI clock and moves the case forward.
+        if (c.getFirstResponseAt() == null) {
+            c.setFirstResponseAt(OffsetDateTime.now());
+        }
+        if (c.getStatus() == CaseStatus.OPEN) {
+            c.setStatus(CaseStatus.IN_PROGRESS);
+        }
+        if (c.getAssignedTo() == null) {
+            c.setAssignedTo(userId);
+        }
+        cases.save(c);
+        return detail(id);
+    }
+
+    public CaseDetailResponse updateStatus(Long id, UpdateStatusRequest req) {
+        if (req == null || req.status() == null || req.status().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status is required");
+        }
+        FieldCase c = getOr404(id);
+        CaseStatus next = parseStatus(req.status());
+        c.setStatus(next);
+        if (next == CaseStatus.RESOLVED && c.getResolvedAt() == null) {
+            c.setResolvedAt(OffsetDateTime.now());
+        }
+        if (next != CaseStatus.RESOLVED) {
+            c.setResolvedAt(null);
+        }
+        cases.save(c);
+        return detail(id);
+    }
+
+    public void delete(Long id) {
+        FieldCase c = getOr404(id);
+        replies.deleteByCaseId(c.getId());
+        cases.deleteById(c.getId());
+    }
+
+    // ---- helpers ----
+    private FieldCase getOr404(Long id) {
+        return cases.findById(id).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "Case not found"));
+    }
+
+    private static CaseType parseType(String v) {
+        if (v == null || v.isBlank()) return CaseType.COMPLAINT;
+        try {
+            return CaseType.valueOf(v.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid case type: " + v);
+        }
+    }
+
+    private static CasePriority parsePriority(String v) {
+        if (v == null || v.isBlank()) return CasePriority.MEDIUM;
+        try {
+            return CasePriority.valueOf(v.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid priority: " + v);
+        }
+    }
+
+    private static CaseStatus parseStatus(String v) {
+        try {
+            return CaseStatus.valueOf(v.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status: " + v);
+        }
+    }
+
+    private static String nz(String v) {
+        return v == null ? "" : v;
+    }
+
+    private static String emptyToNull(String v) {
+        return (v == null || v.isBlank()) ? null : v.trim();
+    }
+}

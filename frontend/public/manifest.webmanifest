@@ -1,0 +1,19 @@
+{
+  "name": "Cha Ghor \u2014 Estate Management",
+  "short_name": "Cha Ghor",
+  "description": "Cha Ghor tea estate management: workforce, attendance, leaf collection, payroll, finance and AI insights.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "lang": "en",
+  "dir": "ltr",
+  "background_color": "#e1ffc6",
+  "theme_color": "#3f8f43",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

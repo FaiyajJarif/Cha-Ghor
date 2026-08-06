@@ -1,0 +1,52 @@
+package com.chaghor.chaghor.withdrawal;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+
+// Maps to the existing `withdrawal_request` table (V1). A worker asks to cash
+// out earned wages; an admin marks it paid or rejected. Payout is a MOCK (bKash
+// is demo-only), so there is no real payment gateway here -- deciding a request
+// just flips status + stamps processed_at. Phase 3 will fire a (mock) SMS when
+// the status changes.
+@Entity
+@Table(name = "withdrawal_request")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class WithdrawalRequest {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "worker_id", nullable = false)
+    private Long workerId;
+
+    @Column(name = "amount", nullable = false)
+    @Builder.Default
+    private BigDecimal amount = BigDecimal.ZERO;
+
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "method", nullable = false, columnDefinition = "withdrawal_method")
+    @Builder.Default
+    private WithdrawalMethod method = WithdrawalMethod.bkash;
+
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "status", nullable = false, columnDefinition = "withdrawal_status")
+    @Builder.Default
+    private WithdrawalStatus status = WithdrawalStatus.pending;
+
+    // DB default now(); let Postgres stamp it on insert.
+    @Column(name = "requested_at", nullable = false, updatable = false, insertable = false)
+    private OffsetDateTime requestedAt;
+
+    @Column(name = "processed_at")
+    private OffsetDateTime processedAt;
+}
