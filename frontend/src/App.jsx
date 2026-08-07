@@ -16,6 +16,7 @@ import SupervisorDashboard from "./pages/supervisor/SupervisorDashboard";
 import SupervisorAttendance from "./pages/supervisor/SupervisorAttendance";
 import SupervisorLeaf from "./pages/supervisor/SupervisorLeaf";
 import SupervisorFields from "./pages/supervisor/SupervisorFields";
+import SupervisorWeather from "./pages/supervisor/SupervisorWeather";
 import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="attendance" element={<SupervisorAttendance />} />
           <Route path="leaf" element={<SupervisorLeaf />} />
           <Route path="fields" element={<SupervisorFields />} />
+          <Route path="weather" element={<SupervisorWeather />} />
         </Route>
       </Routes>
     </>

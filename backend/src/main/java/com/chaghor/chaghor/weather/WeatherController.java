@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.weather;
 
+import com.chaghor.chaghor.weather.dto.WeatherEvent;
 import com.chaghor.chaghor.weather.dto.WeatherResponse;
 import com.chaghor.chaghor.weather.dto.WeatherTrendPoint;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -36,6 +37,14 @@ public class WeatherController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public List<WeatherTrendPoint> trend(@RequestParam(defaultValue = "24") int hours) {
         return service.trend(hours);
+    }
+
+    // The activity log. These are recorded readings classified by their own
+    // numbers, not incidents anyone typed in -- see WeatherEvent.
+    @GetMapping("/events")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<WeatherEvent> events(@RequestParam(defaultValue = "50") int limit) {
+        return service.events(limit);
     }
 
     // Pull a fresh reading now. Safe to call repeatedly: a failed fetch returns

@@ -51,6 +51,12 @@ app:
     latitude: ${APP_WEATHER_LAT:24.8949}
     longitude: ${APP_WEATHER_LON:91.8687}
     enabled: ${APP_WEATHER_ENABLED:true}
+    # Daily retention pass, 03:30. Readings are NEVER deleted -- this only drops
+    # the hourly/7-day prediction arrays off blobs from before today, which are
+    # 96% of a row's size and are forecasts about a day that has already
+    # happened. Temperature, humidity, rainfall and condition are kept forever,
+    # because the yield forecast is meant to learn from them.
+    prune-cron: ${APP_WEATHER_PRUNE_CRON:0 30 3 * * *}
   jwt:
     # Dev default is long enough for HS384. ALWAYS override with APP_JWT_SECRET in
     # staging/production, and rotate it if it ever leaks.

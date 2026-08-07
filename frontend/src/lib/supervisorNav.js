@@ -51,7 +51,7 @@ export const SUPERVISOR_NAV = [
     label: "Weather Monitor",
     path: "/supervisor/weather",
     icon: LuSun,
-    ready: false, // /weather/* endpoints are live; the dedicated screen is not
+    ready: true,
   },
   {
     key: "broadcast",
