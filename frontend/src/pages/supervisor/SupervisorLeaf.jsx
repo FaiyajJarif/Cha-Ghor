@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -36,6 +36,8 @@ import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
 import LeafAiPanel from "../../components/supervisor/LeafAiPanel";
 import LeafEntryDialog from "../../components/supervisor/LeafEntryDialog";
 import LeafPhotoThumb from "../../components/supervisor/LeafPhotoThumb";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 
 // Leaf Collection — the daily weigh-in board.
 //
@@ -153,7 +155,9 @@ export default function SupervisorLeaf() {
   const [topAll, setTopAll] = useState(false);
   // Was hard-capped at 6, so a 40-worker day showed six entries and no way to
   // reach the rest.
-  const [entriesShown, setEntriesShown] = useState(6);
+  const ENTRY_PAGE = 6;
+  const [entryPage, setEntryPage] = useState(0);
+  const [live, setLive] = useState(false);
   // Map editing, same as the Fields board: drop a pin, move it, take it off.
   // A field with no position is not drawn at all, so without this the leaf map
   // could never gain a marker.
@@ -165,6 +169,55 @@ export default function SupervisorLeaf() {
   const [entryDialog, setEntryDialog] = useState(null); // { mode, entry }
   const [entryBusy, setEntryBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
+
+  // Live. The backend has been pushing "leaf.saved" on every record, amend and
+  // delete since the module was wired — nothing was listening, so a weigh-in
+  // taken on a phone never appeared on an open board.
+  const loadRef = useRef(null);
+
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onopen = () => setLive(true);
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        // Only leaf frames. Refetching on every notification would hammer the
+        // API for nothing.
+        if (kind === "leaf.saved" && loadRef.current) {
+          loadRef.current().catch(() => {});
+        }
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        setLive(false);
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     const [l, s, t, w, m, z, a, cfg, zp] = await Promise.all([
@@ -188,6 +241,10 @@ export default function SupervisorLeaf() {
     setAttendance(a.data || []);
     if (cfg.data?.leafQuotaKg != null) setQuota(Number(cfg.data.leafQuotaKg));
   }, [date]);
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     let active = true;
@@ -645,7 +702,9 @@ export default function SupervisorLeaf() {
             <p className="py-6 text-center text-sm text-cg-ink/50">No entries yet.</p>
           ) : (
             <ul className="space-y-2">
-              {entries.slice(0, entriesShown).map((e) => (
+              {entries
+                .slice(entryPage * ENTRY_PAGE, entryPage * ENTRY_PAGE + ENTRY_PAGE)
+                .map((e) => (
                 <li key={e.id}
                     className="flex items-center gap-3 rounded-xl bg-cg-lime/30 px-3 py-2">
                   {/* The bulk that was handed in. Evidence was being stored
@@ -694,14 +753,38 @@ export default function SupervisorLeaf() {
               ))}
             </ul>
           )}
-          {entries.length > entriesShown && (
-            <button
-              type="button"
-              onClick={() => setEntriesShown((n) => n + 12)}
-              className="mt-3 w-full rounded-xl bg-cg-lime/50 px-3 py-2 text-xs font-bold text-cg-green transition hover:bg-cg-lime"
-            >
-              Show more ({entries.length - entriesShown} left)
-            </button>
+          {entries.length > ENTRY_PAGE && (
+            <div className="mt-3 flex items-center justify-between border-t border-[#13483B]/10 pt-3">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-cg-ink/50">
+                {entryPage * ENTRY_PAGE + 1}–
+                {Math.min((entryPage + 1) * ENTRY_PAGE, entries.length)} of{" "}
+                {entries.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setEntryPage((n) => Math.max(0, n - 1))}
+                  disabled={entryPage === 0}
+                  aria-label="Previous entries"
+                  className="grid h-7 w-7 place-items-center rounded-lg bg-cg-lime/50 text-cg-ink disabled:opacity-40"
+                >
+                  <LuChevronLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEntryPage((n) =>
+                      Math.min(Math.ceil(entries.length / ENTRY_PAGE) - 1, n + 1),
+                    )
+                  }
+                  disabled={(entryPage + 1) * ENTRY_PAGE >= entries.length}
+                  aria-label="Next entries"
+                  className="grid h-7 w-7 place-items-center rounded-lg bg-cg-lime/50 text-cg-ink disabled:opacity-40"
+                >
+                  <LuChevronRight size={14} />
+                </button>
+              </div>
+            </div>
           )}
         </Card>
       </div>

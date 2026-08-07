@@ -19,12 +19,14 @@ import {
   LuCamera,
   LuSparkles,
   LuUpload,
+  LuLeaf,
 } from "react-icons/lu";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
+import LeafReviewDrawer from "../../components/admin/LeafReviewDrawer";
 import { WORKER_LEADERBOARD } from "../../lib/adminSample";
 import ChaBot from "../../components/admin/ChaBot";
 
@@ -375,6 +377,8 @@ export default function Workforce() {
   const [attLive, setAttLive] = useState(false);
   // Which worker's monthly attendance is open. Null = closed.
   const [monthFor, setMonthFor] = useState(null);
+  // Admin review of the weigh-ins the payroll surplus is built from.
+  const [leafOpen, setLeafOpen] = useState(false);
 
   useEffect(() => {
     let retry;
@@ -617,6 +621,14 @@ export default function Workforce() {
             </div>
             <button onClick={openSheet} className={BTN_DARK}>
               <LuClipboardList size={16} /> Attendance sheet
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeafOpen(true)}
+              className={BTN_GHOST}
+              title="Review the weigh-ins that feed the payroll surplus"
+            >
+              <LuLeaf size={16} /> Leaf collection
             </button>
             <button onClick={openCreate} className={BTN_DARK}>
               <LuUserPlus size={16} /> Add worker
@@ -1297,6 +1309,8 @@ export default function Workforce() {
           </div>,
           document.body,
         )}
+
+      <LeafReviewDrawer open={leafOpen} onClose={() => setLeafOpen(false)} />
 
       <WorkerMonthModal
         open={!!monthFor}

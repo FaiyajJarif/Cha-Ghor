@@ -39,6 +39,7 @@ export default function LeafPhotoThumb({ entry, onReviewed }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [correcting, setCorrecting] = useState(false);
   const [condition, setCondition] = useState("");
   const urlRef = useRef("");
@@ -47,8 +48,14 @@ export default function LeafPhotoThumb({ entry, onReviewed }) {
   useEffect(() => {
     if (!entry?.photoUrl) return undefined;
     let alive = true;
+    // The backend stores "/api/v1/complaints/attachments/…" but the axios
+    // client's baseURL ALREADY ends in /api/v1, so passing it straight through
+    // requested /api/v1/api/v1/… and 404'd — the photo silently failed to
+    // load. Strip the prefix here; leaving it off also works for any row
+    // stored without it.
+    const path = entry.photoUrl.replace(/^\/api\/v1/, "");
     api
-      .get(entry.photoUrl, { responseType: "blob" })
+      .get(path, { responseType: "blob" })
       .then((r) => {
         if (!alive) return;
         const u = URL.createObjectURL(r.data);
@@ -56,7 +63,9 @@ export default function LeafPhotoThumb({ entry, onReviewed }) {
         setSrc(u);
       })
       .catch(() => {
-        // A missing file should leave the row usable, not broken.
+        // A missing file should leave the row usable, not broken. The
+        // placeholder below shows instead of a broken-image icon.
+        if (alive) setFailed(true);
       });
     return () => {
       alive = false;
@@ -108,7 +117,12 @@ export default function LeafPhotoThumb({ entry, onReviewed }) {
             className="h-10 w-10 rounded-lg object-cover ring-1 ring-[#13483B59]"
           />
         ) : (
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-cg-lime/40 text-cg-ink/30">
+          <span
+            title={failed ? "The photo file could not be loaded" : "Loading photo…"}
+            className={`grid h-10 w-10 place-items-center rounded-lg ${
+              failed ? "bg-rose-50 text-rose-300" : "bg-cg-lime/40 text-cg-ink/30"
+            }`}
+          >
             <LuCamera size={14} />
           </span>
         )}
