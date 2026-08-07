@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { LuX, LuCircleCheck, LuChevronDown } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import { queueOrSend } from "../../lib/outbox";
+import { newUuid } from "../../lib/uuid";
 
 // Submit Collection — weighing green leaf at the field scale.
 //
@@ -21,9 +23,11 @@ const FIELD =
   "w-full rounded-xl bg-[#CFE8DB] px-4 py-3 text-sm text-[#14493B] placeholder-[#14493B]/40 outline-none transition focus:ring-2 focus:ring-[#14493B]/30";
 const LABEL = "mb-1.5 block text-base font-bold text-[#14493B]";
 
+// C pays like B: recorded for quality tracking, carries no bonus.
 const GRADES = [
   { value: "A", label: "Grade A — two leaves and a bud" },
   { value: "B", label: "Grade B — coarser pluck" },
+  { value: "C", label: "Grade C — very coarse, pays like B" },
 ];
 
 // Accepts "CG003", "cg3", "003" or "3" — whatever is written on the card.
@@ -34,7 +38,11 @@ function parseWorkerId(raw) {
   return Number(digits);
 }
 
-export default function WeighInModal({ open, date, workers, zones, onSaved, onClose }) {
+export default function WeighInModal({ open, date, workers, zones, registerTaken = true, onSaved, onClose }) {
+  // Only someone who was at work can hand in leaf. `workers` is already
+  // filtered to today's present/late register by the page — see
+  // SupervisorLeaf. An empty list therefore means the register has not been
+  // taken yet, which is a different problem from "nobody came".
   const [workerRef, setWorkerRef] = useState("");
   const [weight, setWeight] = useState("");
   const [zoneId, setZoneId] = useState("");
@@ -74,7 +82,7 @@ export default function WeighInModal({ open, date, workers, zones, onSaved, onCl
     if (id == null || !matched) {
       setError(
         workerRef.trim()
-          ? `No active worker with id ${workerRef.trim()}.`
+          ? `No worker with id ${workerRef.trim()} is marked present or late today.`
           : "Enter the worker's CG id.",
       );
       return;
@@ -98,14 +106,25 @@ export default function WeighInModal({ open, date, workers, zones, onSaved, onCl
     setBusy(true);
     setError("");
     try {
-      await api.post("/leaf", {
-        workerId: id,
-        date,
-        weightKg: kgVal,
-        grade,
-        zoneId: zoneId ? Number(zoneId) : null,
+      // The scale is in the field, where there is often no signal. The write
+      // goes through the outbox so the weigh-in survives, and carries a
+      // client_uuid so a replay is recognised as the SAME weigh-in rather than
+      // a second bucket of leaf — a duplicate here would overpay the worker,
+      // because surplus is computed straight off this weight.
+      const clientUuid = newUuid();
+      const { queued } = await queueOrSend({
+        path: "/leaf",
+        body: {
+          workerId: id,
+          date,
+          weightKg: kgVal,
+          grade,
+          zoneId: zoneId ? Number(zoneId) : null,
+          clientUuid,
+        },
+        clientUuid,
       });
-      setDone({ name: matched.fullName, kg: kgVal, grade });
+      setDone({ name: matched.fullName, kg: kgVal, grade, queued: !!queued });
       onSaved?.();
     } catch (err) {
       setError(apiError(err, "Could not save that collection entry."));
@@ -131,13 +150,30 @@ export default function WeighInModal({ open, date, workers, zones, onSaved, onCl
             <div className="flex flex-col items-center px-8 py-10 text-center">
               <LuCircleCheck size={64} strokeWidth={1.5} className="text-[#14493B]" />
               <h3 className="mt-6 text-2xl font-extrabold leading-tight text-[#14493B]">
-                Collection Entered
-                <br />
-                Successfully
+                {done.queued ? (
+                  <>
+                    Saved On
+                    <br />
+                    This Device
+                  </>
+                ) : (
+                  <>
+                    Collection Entered
+                    <br />
+                    Successfully
+                  </>
+                )}
               </h3>
               <p className="mt-3 text-sm text-[#14493B]/60">
                 {done.name} · {done.kg} kg · Grade {done.grade}
               </p>
+              {/* Never say "sent" about something still sitting in a queue. */}
+              {done.queued && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  No network right now. This weigh-in is stored on the phone and
+                  uploads by itself when signal returns — you can keep weighing.
+                </p>
+              )}
               <div className="mt-8 flex w-full flex-col gap-2">
                 <button
                   type="button"
@@ -176,6 +212,16 @@ export default function WeighInModal({ open, date, workers, zones, onSaved, onCl
                 {error && (
                   <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">
                     {error}
+                  </p>
+                )}
+
+                {/* Distinguish "register not taken" from "nobody came". The
+                    first is fixable and is almost always what has happened. */}
+                {workers.length === 0 && (
+                  <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
+                    {registerTaken
+                      ? "Nobody is marked present or late today, so there is no one to weigh in for."
+                      : "Attendance has not been taken for this day yet. Mark the register first — only workers who turned up can hand in leaf."}
                   </p>
                 )}
 

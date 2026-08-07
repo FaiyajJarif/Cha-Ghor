@@ -15,6 +15,7 @@ import {
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { queueOrSend, count as outboxCount, flush as outboxFlush } from "../../lib/outbox";
+import { newUuid } from "../../lib/uuid";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import AttendanceDrawer from "../../components/supervisor/AttendanceDrawer";
@@ -35,31 +36,6 @@ import AttendanceAiPanel from "../../components/supervisor/AttendanceAiPanel";
 // The backend upserts on UNIQUE(worker_id, work_date), so saving twice is safe
 // and re-saving a corrected register just overwrites it.
 
-
-// Idempotency key for one worker's mark in one save.
-//
-// Generated ONCE, here, and then persisted with the queued write in IndexedDB
-// -- so a replay sends the identical key and the server recognises it as the
-// same mark rather than a second edit. There is no need to derive it from the
-// data, and an earlier attempt that hashed (worker, date, time) was replaced
-// after a sweep of 42,000 keys turned up collisions: two workers sharing a key
-// would have had one of their marks silently discarded as a duplicate.
-function newUuid() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Older WebView / non-secure context. Still 122 bits of randomness.
-  const b = new Uint8Array(16);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(b);
-  } else {
-    for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
-  }
-  b[6] = (b[6] & 0x0f) | 0x40; // version 4
-  b[8] = (b[8] & 0x3f) | 0x80; // variant 10x
-  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
 
 const CARD_STROKE = "ring-1 ring-[#13483B59]";
 const PAGE_SIZE = 8;

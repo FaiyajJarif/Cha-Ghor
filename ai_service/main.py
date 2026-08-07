@@ -26,6 +26,7 @@ from pydantic import BaseModel  # noqa: E402
 
 import db  # noqa: E402
 import prompts  # noqa: E402
+import vision_prep  # noqa: E402
 import psycopg2  # noqa: E402
 import psycopg2.errors  # noqa: E402
 from extract import extract_worker  # noqa: E402
@@ -50,6 +51,18 @@ class ReportRequest(BaseModel):
     metrics: dict
     language: Optional[str] = "en"
     period_label: Optional[str] = None
+
+
+class LeafGradeRequest(BaseModel):
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    data_base64: str
+
+
+class LeafHealthRequest(BaseModel):
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    data_base64: str
 
 
 class AnomalyRequest(BaseModel):
@@ -185,6 +198,194 @@ def report_endpoint(req: ReportRequest):
     return {"summary": summary, "provider": provider}
 
 
+
+def _prep_leaf_image(data: bytes, content_type: str):
+    """Downscale a leaf photo before any vision model sees it.
+
+    Shared by /leaf-grade and /leaf-health so the SAME resized bytes are used
+    whichever provider answers -- Gemini and Ollama get an identical image, and
+    a fallback does not silently change what was analysed.
+
+    Deliberately NOT applied to /extract-worker: that reads small printed text
+    off a document, which is the one case where downscaling loses the content.
+    """
+    out, ct, note = vision_prep.downscale(data, content_type)
+    if note:
+        print(f"[vision] {note}", flush=True)
+    else:
+        print(f"[vision] image {len(data)//1024} KB -> {len(out)//1024} KB "
+              f"(max edge {vision_prep.MAX_EDGE}px)", flush=True)
+    return out, ct
+
+
+# --- leaf quality grading from a photo ---------------------------------------
+#
+# ADVISORY ONLY. The response is a suggestion the supervisor confirms; nothing
+# here writes a grade, and grade A carries a per-kilo bonus, so an automatic
+# decision would move money on a model's read of a phone photo taken at a
+# field scale in bad light.
+#
+# The model is explicitly allowed to return grade=null when the photo is not
+# good enough to judge, and that path is treated as a success, not an error --
+# "I cannot tell" is the correct answer to an unreadable image.
+@app.post("/leaf-grade")
+def leaf_grade_endpoint(req: LeafGradeRequest):
+    try:
+        data = base64.b64decode(req.data_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Image could not be decoded")
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty image")
+
+    ct = req.content_type or "image/jpeg"
+    if not ct.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only an image can be graded")
+
+    data, ct = _prep_leaf_image(data, ct)
+    b64 = base64.b64encode(data).decode("ascii")
+    try:
+        raw, provider = complete(
+            "leaf_grade", prompts.leaf_grade_messages(), images=[f"data:{ct};base64,{b64}"]
+        )
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No vision model available: {e}")
+
+    # A model that returns prose instead of JSON must not become a grade.
+    try:
+        parsed = json.loads(_strip_fence(raw))
+    except Exception:
+        return {
+            "grade": None,
+            "confidence": 0.0,
+            "observations": [],
+            "concerns": ["The model did not return a readable answer."],
+            "provider": provider,
+        }
+
+    grade = parsed.get("grade")
+    if grade not in ("A", "B", None):
+        grade = None
+    try:
+        conf = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+
+    listy = lambda v: [str(x) for x in v][:6] if isinstance(v, list) else []
+    return {
+        "grade": grade,
+        "confidence": round(conf, 4),
+        "observations": listy(parsed.get("observations")),
+        "concerns": listy(parsed.get("concerns")),
+        "provider": provider,
+    }
+
+
+# --- leaf health assessment --------------------------------------------------
+#
+# Judges the CONDITION of the leaf. Deliberately separate from /leaf-grade,
+# which judges how it was PICKED and is the only one that touches pay.
+#
+# Three things are enforced HERE rather than trusted to the model:
+#   1. the quality gate result is honoured -- a refusal returns no candidates
+#   2. likelihoods are clamped and the list is truncated to three
+#   3. any chemical or dosage the model slips into its advice is stripped
+# A prompt is a request, not a guarantee.
+_BANNED_ADVICE = (
+    "spray", "fungicide", "pesticide", "insecticide", "copper", "sulphate",
+    "sulfate", "mancozeb", "urea", "ml/l", "g/l", "dosage", "dose per",
+    "apply ", "kg/ha", "litre", "liter",
+)
+
+_HEALTH_BANDS = ((90, "HEALTHY"), (70, "MINOR"), (40, "MODERATE"), (0, "SEVERE"))
+
+
+def _band(score):
+    for floor, name in _HEALTH_BANDS:
+        if score >= floor:
+            return name
+    return "SEVERE"
+
+
+@app.post("/leaf-health")
+def leaf_health_endpoint(req: LeafHealthRequest):
+    try:
+        data = base64.b64decode(req.data_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Image could not be decoded")
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty image")
+    ct = req.content_type or "image/jpeg"
+    if not ct.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only an image can be examined")
+
+    data, ct = _prep_leaf_image(data, ct)
+    b64 = base64.b64encode(data).decode("ascii")
+    try:
+        raw, provider = complete(
+            "leaf_health", prompts.leaf_health_messages(),
+            images=[f"data:{ct};base64,{b64}"],
+        )
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No vision model available: {e}")
+
+    try:
+        parsed = json.loads(_strip_fence(raw))
+    except Exception:
+        # An unreadable reply is a refusal, not a diagnosis.
+        return {"usable": False, "refusedReason": "model_unreadable", "healthScore": None,
+                "healthBand": None, "candidates": [], "observations": [],
+                "advice": "The model did not return a readable answer. Judge the leaf yourself.",
+                "provider": provider}
+
+    usable = bool(parsed.get("usable"))
+    if not usable:
+        reason = str(parsed.get("refused_reason") or "unclear")[:40]
+        return {"usable": False, "refusedReason": reason, "healthScore": None,
+                "healthBand": None, "candidates": [], "observations": [],
+                "advice": str(parsed.get("advice") or "Take a closer, better-lit photo.")[:300],
+                "provider": provider}
+
+    try:
+        score = int(round(float(parsed.get("health_score"))))
+    except Exception:
+        score = None
+    if score is not None:
+        score = max(0, min(100, score))
+
+    # Ranked, clamped, and never more than three.
+    candidates = []
+    for c in (parsed.get("candidates") or [])[:3]:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("condition") or "").strip()[:60]
+        if not name:
+            continue
+        try:
+            lk = float(c.get("likelihood") or 0.0)
+        except Exception:
+            lk = 0.0
+        candidates.append({"condition": name,
+                           "likelihood": round(max(0.0, min(1.0, lk)), 3),
+                           "why": str(c.get("why") or "")[:200]})
+    candidates.sort(key=lambda c: c["likelihood"], reverse=True)
+
+    advice = str(parsed.get("advice") or "")[:300]
+    low = advice.lower()
+    if any(w in low for w in _BANNED_ADVICE):
+        # The prompt forbids this; enforce it rather than trusting it.
+        advice = ("Have someone inspect this field. Treatment decisions are not "
+                  "made from a photograph.")
+
+    obs = [str(o)[:160] for o in (parsed.get("observations") or [])][:6]
+
+    return {"usable": True, "refusedReason": None,
+            "healthScore": score,
+            "healthBand": _band(score) if score is not None else None,
+            "candidates": candidates, "observations": obs,
+            "advice": advice, "provider": provider}
+
+
 # --- anomaly flags -----------------------------------------------------------
 # The model reads real payroll / loan rows and says what looks wrong. It reads
 # them through the SAME curated read-only views as everything else -- never a
@@ -263,6 +464,24 @@ def _anomaly_messages(scope: str, rows):
         {"role": "system", "content": system},
         {"role": "user", "content": f"ROWS (JSON):\n{payload}"},
     ]
+
+
+def _strip_fence(text):
+    """Pull a JSON object out of a model reply that may be fenced or chatty.
+
+    Same fence handling as _parse_flags, but scoped to an object -- the leaf
+    grader returns {...}, not [...].
+    """
+    s = (text or "").strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        s = s.split("\n", 1)[1] if "\n" in s else s
+        if s.lstrip().lower().startswith("json"):
+            s = s.lstrip()[4:]
+    start, end = s.find("{"), s.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return "{}"
+    return s[start : end + 1]
 
 
 def _parse_flags(text, scope, valid_refs):

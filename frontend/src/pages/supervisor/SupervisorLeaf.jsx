@@ -19,6 +19,11 @@ import {
   LuChevronLeft,
   LuChevronRight,
   LuClock,
+  LuScale,
+  LuPencil,
+  LuTrash2,
+  LuMapPin,
+  LuCalendar,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
@@ -26,6 +31,11 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import WeighInModal from "../../components/supervisor/WeighInModal";
+import LeafWeighInDrawer from "../../components/supervisor/LeafWeighInDrawer";
+import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
+import LeafAiPanel from "../../components/supervisor/LeafAiPanel";
+import LeafEntryDialog from "../../components/supervisor/LeafEntryDialog";
+import LeafPhotoThumb from "../../components/supervisor/LeafPhotoThumb";
 
 // Leaf Collection — the daily weigh-in board.
 //
@@ -133,10 +143,31 @@ export default function SupervisorLeaf() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [weighOpen, setWeighOpen] = useState(false);
+  // The board: the whole present-worker queue on one sliding panel, which is
+  // the shape the job actually has at a scale. The single-entry modal is kept
+  // for correcting one person after the fact.
+  const [boardOpen, setBoardOpen] = useState(false);
+  // Per-zone performance for the map: today against each field's own norm.
+  const [zonePerf, setZonePerf] = useState([]);
+  // Top Workers shows a podium of 3 by default; the rest are one click away.
+  const [topAll, setTopAll] = useState(false);
+  // Was hard-capped at 6, so a 40-worker day showed six entries and no way to
+  // reach the rest.
+  const [entriesShown, setEntriesShown] = useState(6);
+  // Map editing, same as the Fields board: drop a pin, move it, take it off.
+  // A field with no position is not drawn at all, so without this the leaf map
+  // could never gain a marker.
+  const [placing, setPlacing] = useState(false);
+  const [dropped, setDropped] = useState(null);
+  const [movingField, setMovingField] = useState(null);
+  const [confirmUnpin, setConfirmUnpin] = useState(null);
+  // Correct / remove one weigh-in, in a proper dialog rather than a browser prompt.
+  const [entryDialog, setEntryDialog] = useState(null); // { mode, entry }
+  const [entryBusy, setEntryBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
 
   const load = useCallback(async () => {
-    const [l, s, t, w, m, z, a, cfg] = await Promise.all([
+    const [l, s, t, w, m, z, a, cfg, zp] = await Promise.all([
       api.get("/leaf", { params: { date } }),
       api.get("/leaf/summary", { params: { date } }),
       api.get("/leaf/trend", { params: { days: 14 } }),
@@ -145,6 +176,7 @@ export default function SupervisorLeaf() {
       api.get("/zones"),
       api.get("/attendance", { params: { date } }),
       api.get("/payroll/config"),
+      api.get("/leaf/zone-performance", { params: { date } }).catch(() => ({ data: [] })),
     ]);
     setEntries(l.data || []);
     setSummary(s.data);
@@ -152,6 +184,7 @@ export default function SupervisorLeaf() {
     setWorkers(w.data || []);
     setZonesMeta(m.data?.zones || []);
     setZoneGeo(z.data || []);
+    setZonePerf(zp.data || []);
     setAttendance(a.data || []);
     if (cfg.data?.leafQuotaKg != null) setQuota(Number(cfg.data.leafQuotaKg));
   }, [date]);
@@ -176,6 +209,111 @@ export default function SupervisorLeaf() {
     () => workers.filter((w) => String(w.status).toLowerCase() === "active"),
     [workers],
   );
+
+  // Only workers who actually turned up can hand in leaf.
+  //
+  // Offering the whole payroll would let a supervisor weigh leaf against
+  // somebody who was marked absent — kilos with nobody behind them, paid as
+  // surplus. The field each worker was assigned to today is carried through so
+  // the weigh-in is credited to the right field, not their home zone.
+  const presentWorkers = useMemo(() => {
+    const marked = new Map();
+    for (const a of attendance) {
+      if (a.status === "present" || a.status === "late") {
+        marked.set(a.workerId, a);
+      }
+    }
+    return activeWorkers
+      .filter((w) => marked.has(w.id))
+      .map((w) => ({
+        ...w,
+        todayStatus: marked.get(w.id).status,
+        todayZoneId: marked.get(w.id).zoneId ?? w.zoneId ?? null,
+      }));
+  }, [activeWorkers, attendance]);
+
+  // An empty list means the register was never taken — a different problem
+  // from "nobody came", and one the supervisor can still fix.
+  const registerTaken = attendance.length > 0;
+
+  // Kilos already recorded today per worker, so the board can show "12 kg in"
+  // and a second entry is clearly a deliberate addition, not a duplicate.
+  const weighedByWorker = useMemo(() => {
+    const m = new Map();
+    for (const e of entries) {
+      m.set(e.workerId, (m.get(e.workerId) || 0) + Number(e.weightKg || 0));
+    }
+    return m;
+  }, [entries]);
+
+  // Delete a weigh-in entered in error. Audited server-side with what it was.
+  // --- map pins -----------------------------------------------------------
+
+  const startMove = (tile) => {
+    setMovingField(tile);
+    setPlacing(true);
+    setDropped(null);
+  };
+
+  const handlePick = async (pos) => {
+    if (!movingField) {
+      setDropped(pos);
+      return;
+    }
+    try {
+      await api.put(`/zones/${movingField.id}/geometry`, {
+        lat: pos[0],
+        lng: pos[1],
+        radiusM: movingField.radiusM ?? 250,
+      });
+      await load();
+    } catch (err) {
+      setError(apiError(err, "Could not move that field."));
+    } finally {
+      setMovingField(null);
+      setPlacing(false);
+    }
+  };
+
+  // Clears the PIN only. The field, its yield and its history stay.
+  const unpinField = async (tile) => {
+    try {
+      await api.delete(`/zones/${tile.id}/geometry`);
+      await load();
+    } catch (err) {
+      setError(apiError(err, "Could not take that field off the map."));
+    } finally {
+      setConfirmUnpin(null);
+    }
+  };
+
+  const removeEntry = async (e) => {
+    setEntryBusy(true);
+    try {
+      await api.delete(`/leaf/${e.id}`);
+      await load();
+      setEntryDialog(null);
+    } catch (err) {
+      setError(apiError(err, "Could not remove that weigh-in."));
+    } finally {
+      setEntryBusy(false);
+    }
+  };
+
+  // Correct a weight in place. This number becomes a wage, so it must be
+  // fixable — it used to be permanent.
+  const amendEntry = async (e, weightKg, grade) => {
+    setEntryBusy(true);
+    try {
+      await api.put(`/leaf/${e.id}`, { weightKg, grade });
+      await load();
+      setEntryDialog(null);
+    } catch (err) {
+      setError(apiError(err, "Could not update that weigh-in."));
+    } finally {
+      setEntryBusy(false);
+    }
+  };
 
   // Per worker, for today.
   const perWorker = useMemo(() => {
@@ -248,9 +386,24 @@ export default function SupervisorLeaf() {
     () =>
       perZone.map((z) => {
         const g = zoneGeo.find((x) => x.id === z.id);
+        const perf = zonePerf.find((x) => x.zoneId === z.id);
         const pct = z.target > 0 ? Math.round((z.kg / z.target) * 100) : null;
-        const band =
-          z.kg === 0 ? "empty" : pct === null ? "avg" : pct >= 90 ? "high" : pct >= 60 ? "avg" : "low";
+        // Colour by how this field is doing against ITS OWN recent norm, which
+        // is what /leaf/zone-performance computes. A fixed daily target marks a
+        // genuinely hard field down every single day for being hard; comparing
+        // it to itself does not. The target-based band is kept only as a
+        // fallback for when there is no history yet.
+        const band = perf
+          ? { GOOD: "high", NORMAL: "avg", LOW: "low", NO_DATA: "empty" }[perf.band] || "avg"
+          : z.kg === 0
+            ? "empty"
+            : pct === null
+              ? "avg"
+              : pct >= 90
+                ? "high"
+                : pct >= 60
+                  ? "avg"
+                  : "low";
         return {
           id: z.id,
           label: z.label,
@@ -266,7 +419,7 @@ export default function SupervisorLeaf() {
           radiusM: g?.radiusM ?? 250,
         };
       }),
-    [perZone, zoneGeo],
+    [perZone, zoneGeo, zonePerf],
   );
 
   const totalPages = Math.max(1, Math.ceil(perWorker.length / PAGE_SIZE));
@@ -319,20 +472,37 @@ export default function SupervisorLeaf() {
           <p className="text-sm text-cg-ink/60">Daily harvest entry & zone summary</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="rounded-lg border border-[#13483B59] px-3 py-2 text-sm outline-none focus:border-cg-green"
-          />
+          <label className="inline-flex items-center gap-2 rounded-xl border border-[#13483B59] bg-white px-3 py-2 shadow-sm">
+            <LuCalendar size={15} className="shrink-0 text-cg-green" />
+            <span className="text-[11px] font-bold uppercase tracking-wide text-cg-ink/50">
+              Date
+            </span>
+            <input
+              type="date"
+              value={date}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setDate(e.target.value)}
+              className="bg-transparent text-sm font-semibold text-cg-ink outline-none"
+            />
+          </label>
           <button type="button" className={BTN_GHOST} onClick={exportCsv}>
             <LuDownload size={15} /> CSV
           </button>
           <button type="button" className={BTN_GHOST} onClick={exportPdf}>
             <LuPrinter size={15} /> PDF
           </button>
-          <button type="button" className={BTN_DARK} onClick={() => setWeighOpen(true)}>
-            <LuPlus size={15} /> Submit Collection
+          {/* The board is the normal way to work a scale queue; the single
+              modal stays for correcting one person afterwards. */}
+          <button type="button" className={BTN_DARK} onClick={() => setBoardOpen(true)}>
+            <LuScale size={15} /> Weigh-in board
+          </button>
+          <button
+            type="button"
+            onClick={() => setWeighOpen(true)}
+            title="Record one weigh-in by worker id — for a correction or a late arrival"
+            className="inline-flex items-center gap-2 rounded-xl border border-[#13483B59] bg-white px-4 py-2 text-sm font-bold text-[#14493B] shadow-sm transition hover:bg-[#D3FFAC]"
+          >
+            <LuPlus size={15} /> Single entry
           </button>
         </div>
       </div>
@@ -367,22 +537,71 @@ export default function SupervisorLeaf() {
       {/* Top workers + recent entries */}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <h2 className="text-lg font-extrabold text-cg-ink">Top Workers Today</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-extrabold text-cg-ink">Top Workers Today</h2>
+            {perWorker.length > 3 && (
+              <button
+                type="button"
+                onClick={() => setTopAll((v) => !v)}
+                className="rounded-lg bg-cg-lime/60 px-3 py-1.5 text-xs font-bold text-cg-green"
+              >
+                {topAll ? "Show top 3" : `Show all ${perWorker.length}`}
+              </button>
+            )}
+          </div>
           {perWorker.length === 0 ? (
             <Card className={`${PANEL_MIN} grid place-items-center`}>
               <p className="text-sm text-cg-ink/50">No weigh-ins yet today.</p>
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-3">
-              {perWorker.slice(0, 3).map((w) => (
-                <Card key={w.workerId} className={PANEL_MIN}>
-                  <p className="font-bold text-cg-ink">{w.name}</p>
-                  <p className="text-xs text-cg-ink/50">{w.zone}</p>
-                  <p className="mt-2 text-3xl font-extrabold text-cg-ink">
-                    {kg(w.kg)}
-                    <span className="ml-1 text-base font-bold text-cg-ink/40">kg</span>
+              {(topAll ? perWorker : perWorker.slice(0, 3)).map((w, i) => (
+                <Card
+                  key={w.workerId}
+                  /* Centred: the cards are a podium, and left-aligned text in a
+                     tall box left the number floating against the top edge. */
+                  className={`${PANEL_MIN} relative flex flex-col items-center justify-center overflow-hidden text-center ${
+                    i === 0 && !topAll ? "bg-[#D3FFAC]" : ""
+                  }`}
+                >
+                  {/* The leader gets the filled card. A podium where all three
+                      look identical is not a podium. */}
+                  {i < 3 && !topAll && (
+                    <span
+                      className={`absolute left-3 top-3 grid h-8 w-8 place-items-center rounded-full text-sm font-extrabold ${
+                        i === 0
+                          ? "bg-[#14493B] text-white"
+                          : "bg-cg-lime text-cg-green"
+                      }`}
+                    >
+                      {i + 1}
+                    </span>
+                  )}
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/70 text-base font-extrabold text-cg-green ring-1 ring-[#13483B]/10">
+                    {(w.name || "?")
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((x) => x[0])
+                      .join("")
+                      .toUpperCase()}
+                  </span>
+                  <p className="mt-2 text-lg font-extrabold leading-tight text-cg-ink">
+                    {w.name}
                   </p>
-                  <p className="mt-1 text-xs text-cg-green">
+                  <p className="text-sm text-cg-ink/50">{w.zone}</p>
+                  <p className="mt-3 text-5xl font-extrabold leading-none text-cg-ink">
+                    {kg(w.kg)}
+                    <span className="ml-1.5 text-xl font-bold text-cg-ink/40">kg</span>
+                  </p>
+                  {/* Against the quota, so the number means something on its
+                      own rather than only relative to the other two. */}
+                  <p className="mt-2 text-xs font-semibold text-cg-ink/60">
+                    {quota > 0
+                      ? `${Math.round((w.kg / quota) * 100)}% of the ${kg(quota)} kg quota`
+                      : ""}
+                  </p>
+                  <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-white/70 px-3 py-1 text-xs font-bold text-cg-green ring-1 ring-[#13483B]/10">
+                    <LuLeaf size={12} />
                     {w.gradeA > 0 ? `${kg(w.gradeA)} kg grade A` : "no grade A yet"}
                   </p>
                 </Card>
@@ -426,9 +645,13 @@ export default function SupervisorLeaf() {
             <p className="py-6 text-center text-sm text-cg-ink/50">No entries yet.</p>
           ) : (
             <ul className="space-y-2">
-              {entries.slice(0, 6).map((e) => (
+              {entries.slice(0, entriesShown).map((e) => (
                 <li key={e.id}
                     className="flex items-center gap-3 rounded-xl bg-cg-lime/30 px-3 py-2">
+                  {/* The bulk that was handed in. Evidence was being stored
+                      and never shown — photo_id was written but LeafResponse
+                      did not return it, so nothing could display it. */}
+                  <LeafPhotoThumb entry={e} onReviewed={() => load().catch(() => {})} />
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white text-xs font-bold text-cg-green">
                     {kg(e.weightKg)}
                   </span>
@@ -447,9 +670,38 @@ export default function SupervisorLeaf() {
                       {e.grade ? ` · Grade ${e.grade}` : ""}
                     </p>
                   </div>
+                  {/* A mistyped weight used to be permanent, and this number
+                      becomes a wage. Both actions are audited server-side. */}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      title="Correct this weight"
+                      onClick={() => setEntryDialog({ mode: "edit", entry: e })}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-cg-ink/60 hover:bg-white"
+                    >
+                      <LuPencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Remove this weigh-in"
+                      onClick={() => setEntryDialog({ mode: "delete", entry: e })}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-rose-600 hover:bg-rose-50"
+                    >
+                      <LuTrash2 size={13} />
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
+          )}
+          {entries.length > entriesShown && (
+            <button
+              type="button"
+              onClick={() => setEntriesShown((n) => n + 12)}
+              className="mt-3 w-full rounded-xl bg-cg-lime/50 px-3 py-2 text-xs font-bold text-cg-green transition hover:bg-cg-lime"
+            >
+              Show more ({entries.length - entriesShown} left)
+            </button>
           )}
         </Card>
       </div>
@@ -459,7 +711,35 @@ export default function SupervisorLeaf() {
       <Card>
         <div className="mb-4 flex items-center gap-2">
           <h3 className="font-bold text-cg-ink">Zone Performance</h3>
-          <InfoTip text="Each field is coloured by kilos collected against its own daily target. Fields you have not placed on the map yet are listed on the right but not drawn." />
+          <InfoTip text="Each field is coloured by how its kilos-per-worker today compare with its OWN average over the last 14 days — not against a fixed target, which would mark a genuinely hard field down every day for being hard. The estate-wide comparison is shown alongside, and the two are allowed to disagree. Fields with nothing weighed in yet show as no data, never as failing." />
+        </div>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setPlacing((v) => !v);
+              setMovingField(null);
+              setDropped(null);
+            }}
+            className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+              placing
+                ? "bg-[#14493B] text-white"
+                : "bg-[#D3FFAC] text-[#14493B] hover:brightness-95"
+            }`}
+          >
+            <LuMapPin size={14} className="mr-1 inline" />
+            {placing ? "Click the map…" : "Place a field"}
+          </button>
+          {placing && (
+            <span className="rounded-lg bg-[#D3FFAC] px-3 py-2 text-xs font-semibold text-[#14493B]">
+              {movingField
+                ? `Click the new position for ${movingField.label}.`
+                : "Click the map, then choose which field it is."}
+            </span>
+          )}
+          <span className="text-[11px] text-cg-ink/50">
+            Click any marker to move it or take it off the map.
+          </span>
         </div>
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
@@ -474,13 +754,25 @@ export default function SupervisorLeaf() {
                   </div>
                 }
               >
-                <ZoneHeatmapMap tiles={mapTiles} height={MAP_H} />
+                <ZoneHeatmapMap
+                  tiles={mapTiles}
+                  height={MAP_H}
+                  placing={placing}
+                  draftPosition={dropped}
+                  draftRadiusM={250}
+                  onPick={handlePick}
+                  onMoveField={startMove}
+                  onRemoveField={(t) => setConfirmUnpin(t)}
+                />
               </Suspense>
             </ErrorBoundary>
           </div>
+          {/* Was locked to the map's exact height, which cut the last field
+              off the bottom with no indication anything was missing. It now
+              scrolls only when it genuinely overflows a taller ceiling. */}
           <div
             className="overflow-y-auto pr-1"
-            style={{ height: MAP_H }}
+            style={{ maxHeight: MAP_H + 120 }}
           >
             {perZone.every((z) => z.kg === 0) ? (
               <div className="grid h-full place-items-center px-4 text-center text-sm text-cg-ink/50">
@@ -489,17 +781,48 @@ export default function SupervisorLeaf() {
             ) : (
               <ul className="space-y-3">
                 {perZone.map((z) => {
+                const perf = zonePerf.find((x) => x.zoneId === z.id);
                 const pct = z.target > 0 ? Math.round((z.kg / z.target) * 100) : null;
                 const tone = pct === null ? "bg-cg-lime text-cg-green"
                   : pct >= 90 ? "bg-emerald-100 text-emerald-700"
                   : pct >= 60 ? "bg-sky-100 text-sky-700"
                   : "bg-rose-100 text-rose-700";
                 return (
-                  <li key={z.id} className="rounded-xl p-3 ring-1 ring-[#13483B59]">
+                  <li
+                    key={z.id}
+                    /* White fill + a solid border. It previously had only a ring
+                       over the parent card, so the stroke had nothing to sit
+                       against and effectively disappeared. */
+                    className="rounded-xl border border-[#13483B59] bg-white p-3 shadow-sm"
+                  >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-cg-ink">{z.label}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${tone}`}>
-                        {pct === null ? "no target" : pct >= 90 ? "good" : pct >= 60 ? "on track" : "below"}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                          perf
+                            ? {
+                                GOOD: "bg-emerald-100 text-emerald-700",
+                                NORMAL: "bg-sky-100 text-sky-700",
+                                LOW: "bg-rose-100 text-rose-700",
+                                NO_DATA: "bg-slate-100 text-slate-500",
+                              }[perf.band]
+                            : tone
+                        }`}
+                      >
+                        {perf
+                          ? {
+                              GOOD: "doing well",
+                              NORMAL: "as usual",
+                              LOW: "below usual",
+                              NO_DATA: "no data",
+                            }[perf.band]
+                          : pct === null
+                            ? "no target"
+                            : pct >= 90
+                              ? "good"
+                              : pct >= 60
+                                ? "on track"
+                                : "below"}
                       </span>
                     </div>
                     <div className="mt-1 flex items-baseline justify-between text-xs text-cg-ink/60">
@@ -508,6 +831,14 @@ export default function SupervisorLeaf() {
                       </span>
                       {pct !== null && <span className="font-bold text-cg-ink">{pct}%</span>}
                     </div>
+                    {/* The server's one-line verdict, naming the numbers it
+                        came from so a supervisor can disagree on the evidence
+                        rather than trusting a colour. */}
+                    {perf?.verdict && (
+                      <p className="mt-1.5 text-[11px] leading-snug text-cg-ink/60">
+                        {perf.verdict}
+                      </p>
+                    )}
                     {pct !== null && (
                       <div className="mt-1 h-2 w-full rounded-full bg-cg-lime/50">
                         <div className={`h-2 rounded-full ${pct >= 90 ? "bg-cg-green" : pct >= 60 ? "bg-sky-500" : "bg-rose-400"}`}
@@ -522,6 +853,9 @@ export default function SupervisorLeaf() {
           </div>
         </div>
       </Card>
+
+      {/* AI: photo grading + yield forecast */}
+      <LeafAiPanel />
 
       {/* Trend */}
       <Card>
@@ -674,10 +1008,80 @@ export default function SupervisorLeaf() {
         </div>
       )}
 
+      <AssignFieldDialog
+        open={!!dropped}
+        position={dropped}
+        fields={zoneGeo}
+        onSaved={() => load().catch(() => {})}
+        onClose={() => {
+          setDropped(null);
+          setPlacing(false);
+        }}
+      />
+
+      {confirmUnpin && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="bg-[#14493B] px-6 py-4">
+              <h3 className="text-lg font-extrabold text-white">Remove from map?</h3>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm text-[#14493B]">
+                <span className="font-bold">{confirmUnpin.label}</span> will no
+                longer be drawn on the map.
+              </p>
+              <p className="mt-2 text-xs text-[#14493B]/60">
+                Only the pin is cleared. The field, its weigh-ins and its yield
+                history are untouched, and you can place it again at any time.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#13483B]/10 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setConfirmUnpin(null)}
+                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-[#14493B]/60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => unpinField(confirmUnpin)}
+                className="rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <LeafEntryDialog
+        open={!!entryDialog}
+        mode={entryDialog?.mode}
+        entry={entryDialog?.entry}
+        quota={quota}
+        busy={entryBusy}
+        onSave={(w, g) => amendEntry(entryDialog.entry, w, g)}
+        onDelete={() => removeEntry(entryDialog.entry)}
+        onClose={() => setEntryDialog(null)}
+      />
+
+      <LeafWeighInDrawer
+        open={boardOpen}
+        date={date}
+        workers={presentWorkers}
+        zones={zonesMeta}
+        registerTaken={registerTaken}
+        alreadyWeighed={weighedByWorker}
+        onSaved={() => load().catch(() => {})}
+        onClose={() => setBoardOpen(false)}
+      />
+
       <WeighInModal
         open={weighOpen}
         date={date}
-        workers={activeWorkers}
+        workers={presentWorkers}
+        registerTaken={registerTaken}
         zones={zonesMeta}
         onSaved={() => load().catch(() => {})}
         onClose={() => setWeighOpen(false)}

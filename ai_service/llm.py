@@ -30,6 +30,13 @@ ROUTES = {
     "text2sql": os.getenv("ROUTE_TEXT2SQL", "gemini"),
     "answer": os.getenv("ROUTE_ANSWER", "ollama"),
     "extract": os.getenv("ROUTE_EXTRACT", "gemini"),
+    # Leaf grading is a VISION task. It defaults to gemini because the local
+    # Ollama model in this stack is text-only -- a photo sent there comes back
+    # as a confident guess about an image it never saw, which is the worst
+    # possible failure for something that suggests a pay grade.
+    "leaf_grade": os.getenv("ROUTE_LEAF_GRADE", "gemini"),
+    # Health assessment is also vision-only, same reasoning as leaf_grade.
+    "leaf_health": os.getenv("ROUTE_LEAF_HEALTH", "gemini"),
     "report": os.getenv("ROUTE_REPORT", "gemini"),
     # anomaly detection reads real payroll / loan rows, so it defaults to the
     # LOCAL model for the same reason "answer" does -- row-level money data
@@ -109,6 +116,12 @@ def _describe(provider, model, e):
     resp = getattr(e, "response", None)
     if resp is not None:
         body = (resp.text or "").replace("\n", " ")[:400]
+        if resp.status_code == 429:
+            # The single most common failure on a free key, and the one whose
+            # raw body is least useful. Say what it is and when it clears.
+            return (f"{provider}({model}) DAILY QUOTA EXHAUSTED - the free Gemini tier "
+                    f"allows a limited number of requests per day and they are used up. "
+                    f"It resets at midnight Pacific time. Grade by hand until then.")
         return f"{provider}({model}) HTTP {resp.status_code}: {body}"
     return f"{provider}({model}) {type(e).__name__}: {e}"
 
@@ -126,9 +139,20 @@ def complete(task: str, messages, images=None):
 
     errors = []
     for provider in order:
+        # Skip a provider that cannot possibly serve this request rather than
+        # calling it and reporting a confusing failure.
+        if images and provider == "ollama" and not OLLAMA_VISION_MODEL:
+            errors.append("ollama: no OLLAMA_VISION_MODEL configured, cannot read images")
+            continue
         model = None
-        if task == "extract" and provider == "ollama":
-            model = OLLAMA_VISION_MODEL if images else OLLAMA_MODEL
+        if provider == "ollama" and images:
+            # ANY task that sends an image needs the vision model, not just
+            # "extract". This was hardcoded to one task, so leaf grading fell
+            # back to the text-only model and Ollama answered:
+            #   "Multimodal data provided, but model does not support
+            #    multimodal requests"
+            # which read like a broken fallback when it was the wrong model.
+            model = OLLAMA_VISION_MODEL
         try:
             return _PROVIDERS[provider](messages, model=model, images=images), provider
         except Exception as e:  # noqa: BLE001 - try the fallback provider
