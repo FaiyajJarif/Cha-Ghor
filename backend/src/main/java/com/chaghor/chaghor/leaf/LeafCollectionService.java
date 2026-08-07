@@ -3,6 +3,7 @@ package com.chaghor.chaghor.leaf;
 import com.chaghor.chaghor.leaf.dto.LeafRecordRequest;
 import com.chaghor.chaghor.leaf.dto.LeafResponse;
 import com.chaghor.chaghor.leaf.dto.LeafSummaryResponse;
+import com.chaghor.chaghor.leaf.dto.LeafTrendPoint;
 import com.chaghor.chaghor.user.UserRepository;
 import com.chaghor.chaghor.worker.Worker;
 import com.chaghor.chaghor.worker.WorkerRepository;
@@ -15,9 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 // Green-leaf collection module. Records how much leaf each worker brought in
 // per day and lists it back for the day sheet + a small summary card. Quality
@@ -50,7 +54,9 @@ public class LeafCollectionService {
 
         LeafCollection lc = LeafCollection.builder()
                 .workerId(worker.getId())
-                .zoneId(worker.getZoneId())
+                // Which field this leaf came from: the one the supervisor
+                // picked, else the worker's home zone.
+                .zoneId(req.zoneId() != null ? req.zoneId() : worker.getZoneId())
                 .collectDate(req.date() != null ? req.date() : LocalDate.now())
                 .weightKg(weight)
                 .qualityGrade(parseGrade(req.grade()))
@@ -88,7 +94,39 @@ public class LeafCollectionService {
         String zone = zoneName(lc.getZoneId());
         String grade = (lc.getQualityGrade() != null) ? lc.getQualityGrade().name() : null;
         return new LeafResponse(lc.getId(), lc.getWorkerId(), workerName, zone,
-                lc.getCollectDate(), lc.getWeightKg(), grade);
+                lc.getZoneId(), lc.getCollectDate(), lc.getWeightKg(), grade,
+                lc.getCreatedAt() == null ? null : lc.getCreatedAt().toString());
+    }
+
+    // Per-day totals for the collection history chart, oldest first. Days with
+    // no weigh-in come back as zero rather than being omitted, so the chart
+    // keeps an even x-axis instead of silently closing the gap.
+    @Transactional(readOnly = true)
+    public List<LeafTrendPoint> trend(int days) {
+        int n = Math.max(1, Math.min(days, 90));
+        LocalDate end = LocalDate.now();
+        LocalDate start = end.minusDays(n - 1L);
+
+        Map<LocalDate, BigDecimal> kg = new HashMap<>();
+        Map<LocalDate, Long> count = new HashMap<>();
+        for (LeafCollection lc : repo.findByCollectDateBetween(start, end)) {
+            kg.merge(lc.getCollectDate(), nz(lc.getWeightKg()), BigDecimal::add);
+            count.merge(lc.getCollectDate(), 1L, Long::sum);
+        }
+        List<LeafTrendPoint> out = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            LocalDate d = start.plusDays(i);
+            out.add(new LeafTrendPoint(
+                    d,
+                    d.getDayOfMonth() + "/" + d.getMonthValue(),
+                    count.getOrDefault(d, 0L),
+                    kg.getOrDefault(d, BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP)));
+        }
+        return out;
+    }
+
+    private static BigDecimal nz(BigDecimal b) {
+        return b == null ? BigDecimal.ZERO : b;
     }
 
     private String zoneName(Long zoneId) {

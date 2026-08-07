@@ -13,5 +13,11 @@ public record LeafRecordRequest(
         LocalDate date,
         @NotNull(message = "weightKg is required")
         @PositiveOrZero(message = "weightKg cannot be negative") BigDecimal weightKg,
-        String grade
+        String grade,
+
+        // Which field the leaf actually came from. Optional: null keeps the old
+        // behaviour of using the worker's home zone. Pluckers get moved between
+        // fields, and leaf_collection.zone_id has always existed to record where
+        // the crop came from -- nothing could set it to anything else before.
+        Long zoneId
 ) {}

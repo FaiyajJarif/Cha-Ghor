@@ -6,6 +6,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 
 // Maps to the existing `zones` table.
 //
@@ -54,4 +55,32 @@ public class Zone {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "polygon_geojson", columnDefinition = "jsonb")
     private String polygonGeojson;
+
+    // --- field state, added in V23 ------------------------------------------
+    // Plain VARCHAR with CHECK constraints rather than native Postgres enums:
+    // every native enum in this schema has cost time at some point (lowercase
+    // labels, ADD VALUE migrations, views that cannot be re-typed).
+
+    // active | maintenance | resting
+    @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
+    private String status = "active";
+
+    // good | caution | poor -- the ground condition a supervisor observed.
+    @Column(name = "condition", nullable = false, length = 20)
+    @Builder.Default
+    private String condition = "good";
+
+    // What they actually saw: "muddy after last night's rain", "pruning until
+    // Friday". The condition alone never explains itself.
+    @Column(name = "field_note", columnDefinition = "TEXT")
+    private String fieldNote;
+
+    // A site photo, stored through the same attachment service the complaint
+    // evidence uses -- UUID filenames, magic-byte checks, images only.
+    @Column(name = "photo_url", length = 300)
+    private String photoUrl;
+
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
 }

@@ -15,4 +15,8 @@ public interface LeafCollectionRepository extends JpaRepository<LeafCollection, 
             Long workerId, LocalDate start, LocalDate end);
 
     long countByCollectDate(LocalDate collectDate);
+
+    // Every weigh-in across a date range, for the collection trend chart. One
+    // query for the whole window rather than fourteen per-day calls.
+    List<LeafCollection> findByCollectDateBetween(LocalDate start, LocalDate end);
 }

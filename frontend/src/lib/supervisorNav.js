@@ -37,14 +37,14 @@ export const SUPERVISOR_NAV = [
     label: "Leaf Collection",
     path: "/supervisor/leaf",
     icon: LuLeaf,
-    ready: false, // POST /leaf exists; the weigh-in screen does not yet
+    ready: true,
   },
   {
     key: "fields",
     label: "Fields",
     path: "/supervisor/fields",
     icon: LuMap,
-    ready: false,
+    ready: true,
   },
   {
     key: "weather",

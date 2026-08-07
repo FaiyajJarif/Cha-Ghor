@@ -14,6 +14,8 @@ import AdminLayout from "./components/admin/AdminLayout";
 import SupervisorLayout from "./components/supervisor/SupervisorLayout";
 import SupervisorDashboard from "./pages/supervisor/SupervisorDashboard";
 import SupervisorAttendance from "./pages/supervisor/SupervisorAttendance";
+import SupervisorLeaf from "./pages/supervisor/SupervisorLeaf";
+import SupervisorFields from "./pages/supervisor/SupervisorFields";
 import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
@@ -86,6 +88,8 @@ export default function App() {
         >
           <Route index element={<SupervisorDashboard />} />
           <Route path="attendance" element={<SupervisorAttendance />} />
+          <Route path="leaf" element={<SupervisorLeaf />} />
+          <Route path="fields" element={<SupervisorFields />} />
         </Route>
       </Routes>
     </>

@@ -3,6 +3,7 @@ package com.chaghor.chaghor.leaf;
 import com.chaghor.chaghor.leaf.dto.LeafRecordRequest;
 import com.chaghor.chaghor.leaf.dto.LeafResponse;
 import com.chaghor.chaghor.leaf.dto.LeafSummaryResponse;
+import com.chaghor.chaghor.leaf.dto.LeafTrendPoint;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -39,6 +40,13 @@ public class LeafCollectionController {
     }
 
     // Record one pluck. recorded_by is taken from the logged-in user.
+    // Per-day totals for the collection history chart.
+    @GetMapping("/trend")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<LeafTrendPoint> trend(@RequestParam(defaultValue = "14") int days) {
+        return service.trend(days);
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public LeafResponse record(@Valid @RequestBody LeafRecordRequest req, Authentication auth) {

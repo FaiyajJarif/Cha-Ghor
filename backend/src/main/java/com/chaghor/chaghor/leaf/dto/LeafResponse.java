@@ -8,7 +8,12 @@ public record LeafResponse(
         Long workerId,
         String workerName,
         String zone,
+        Long zoneId,
         LocalDate date,
         BigDecimal weightKg,
-        String grade
+        String grade,
+        // When the weigh-in was actually recorded, so the supervisor screen can
+        // show "10:15 AM" against each entry. The column has always existed;
+        // it just was not surfaced.
+        String recordedAt
 ) {}

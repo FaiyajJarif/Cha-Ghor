@@ -9,6 +9,7 @@ import {
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
+import { LuHouse, LuLocateFixed } from "react-icons/lu";
 import "leaflet/dist/leaflet.css";
 
 // The attendance heatmap on a real map.
@@ -240,7 +241,7 @@ function MapControls({ tiles, onGoHome }) {
             style={{ ...btn, justifyContent: "center", background: "#eef7e2" }}
             title="Back to the estate"
           >
-            🏡 Estate
+            <LuHouse size={13} /> Estate
           </button>
           <button
             type="button"
@@ -249,7 +250,8 @@ function MapControls({ tiles, onGoHome }) {
             style={{ ...btn, justifyContent: "center", background: "#eef7e2" }}
             title="Centre on where you are standing"
           >
-            {busy ? "…" : "📍 Me"}
+            <LuLocateFixed size={13} />
+            {busy ? "Locating…" : "Me"}
           </button>
         </div>
 

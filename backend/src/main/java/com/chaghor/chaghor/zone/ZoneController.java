@@ -1,5 +1,7 @@
 package com.chaghor.chaghor.zone;
 
+import com.chaghor.chaghor.zone.dto.FieldResponse;
+import com.chaghor.chaghor.zone.dto.FieldStateRequest;
 import com.chaghor.chaghor.zone.dto.ZoneGeometryRequest;
 import com.chaghor.chaghor.zone.dto.ZoneResponse;
 import jakarta.validation.Valid;
@@ -26,6 +28,27 @@ public class ZoneController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public List<ZoneResponse> list() {
         return service.list();
+    }
+
+    // The Fields board: every field with its state plus the day's workers,
+    // yield and efficiency, computed from the registers.
+    @GetMapping("/fields")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<FieldResponse> fields(
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate date) {
+        return service.fields(date);
+    }
+
+    // Status, ground condition, note and site photo -- what the supervisor
+    // observed. Supervisor-writable: they are the one standing in the field.
+    @PutMapping("/{id}/state")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public FieldResponse updateState(@PathVariable Long id,
+                                     @Valid @RequestBody FieldStateRequest req) {
+        return service.updateState(id, req);
     }
 
     // Drop or move a field's pin. Idempotent — saving the same position twice
