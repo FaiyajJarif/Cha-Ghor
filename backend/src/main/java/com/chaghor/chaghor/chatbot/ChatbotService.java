@@ -31,7 +31,7 @@ public class ChatbotService {
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ChatbotService(@Value("${ai.service.url:http://localhost:8000}") String aiBaseUrl) {
+    public ChatbotService(@Value("${app.ai.service.url:http://127.0.0.1:8000}") String aiBaseUrl) {
         this.aiBaseUrl = aiBaseUrl.replaceAll("/+$", "");
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)

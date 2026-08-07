@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LuBell } from "react-icons/lu";
 import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 
 // Live notification bell in the header. It opens a WebSocket to the backend and
 // prepends any message it receives. The socket URL comes from VITE_WS_URL and
@@ -76,7 +77,7 @@ export default function NotificationBell() {
     return () => {
       closedByUs = true;
       clearTimeout(retry);
-      if (wsRef.current) wsRef.current.close();
+      closeSocket(wsRef.current);
     };
   }, []);
 

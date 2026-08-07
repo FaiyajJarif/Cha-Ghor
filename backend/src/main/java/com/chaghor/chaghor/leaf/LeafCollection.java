@@ -56,4 +56,16 @@ public class LeafCollection {
 
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
+
+    // Idempotency key for offline replays (column + partial unique index added
+    // in V18, mapped here for the first time).
+    //
+    // This matters more here than on attendance. Attendance has
+    // UNIQUE(worker_id, work_date), so a replayed save can only ever overwrite.
+    // Leaf has NO natural unique key -- a plucker legitimately weighs in
+    // several times a day -- so a replayed POST would insert a SECOND row and
+    // double-count the kilos. Those kilos feed the payroll surplus, so the
+    // duplicate would quietly overpay someone.
+    @Column(name = "client_uuid")
+    private java.util.UUID clientUuid;
 }

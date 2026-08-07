@@ -9,6 +9,7 @@ import {
   LuExternalLink,
   LuCalendarPlus,
   LuMapPin,
+  LuSettings,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
@@ -18,6 +19,7 @@ import ErrorBoundary from "../../components/ErrorBoundary";
 import HarvestingFieldsModal from "../../components/supervisor/HarvestingFieldsModal";
 import CreateScheduleModal from "../../components/supervisor/CreateScheduleModal";
 import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
+import FieldManagerModal from "../../components/supervisor/FieldManagerModal";
 
 // Field & Zonal Management.
 //
@@ -90,6 +92,8 @@ export default function SupervisorFields() {
   // rather than opening the "which field is this?" dialog.
   const [movingField, setMovingField] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null);
+  // Add / rename / retire the estate's fields. Admin-only on the server.
+  const [manageOpen, setManageOpen] = useState(false);
 
   const load = useCallback(async () => {
     const [f, w] = await Promise.all([
@@ -301,6 +305,17 @@ export default function SupervisorFields() {
             >
               <LuMapPin size={14} className="mr-1 inline" />
               {placing ? "Click the map…" : "Place a field"}
+            </button>
+            {/* Add / rename / retire. Separate from placing, because creating a
+                field and knowing where it is are two different jobs done by two
+                different people at two different times. */}
+            <button
+              type="button"
+              onClick={() => setManageOpen(true)}
+              className="rounded-xl bg-[#14493B] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110"
+            >
+              <LuSettings size={14} className="mr-1 inline" />
+              Manage fields
             </button>
             <button
               type="button"
@@ -715,6 +730,12 @@ export default function SupervisorFields() {
           </div>
         </div>
       )}
+
+      <FieldManagerModal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        onChanged={load}
+      />
 
       <AssignFieldDialog
         open={!!dropped}

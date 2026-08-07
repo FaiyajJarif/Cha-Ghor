@@ -6,6 +6,7 @@ import {
   LuPencil,
   LuCheck,
   LuX,
+  LuTrash2,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
@@ -66,6 +67,9 @@ export default function ZoneHeatmap({ rows, zones, onZonesChanged }) {
   const [draftDiameter, setDraftDiameter] = useState(500); // metres, diameter
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Which field is being taken off the map. Confirmed first, because a pin that
+  // took someone a walk to place should not vanish on a mis-tap.
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   const loadGeo = async () => {
     try {
@@ -133,6 +137,28 @@ export default function ZoneHeatmap({ rows, zones, onZonesChanged }) {
   const cancelEdit = () => {
     setEditingId(null);
     setDraftPos(null);
+  };
+
+  // Take a field off the map.
+  //
+  // This clears the POSITION only -- DELETE /zones/{id}/geometry nulls the
+  // stored GeoJSON and nothing else. The field, its workers, its yield and its
+  // history are untouched, and it can be placed again at any time. Retiring a
+  // field entirely is a separate, admin-only action.
+  const removeFromMap = async (t) => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.delete(`/zones/${t.id}/geometry`);
+      await loadGeo();
+      onZonesChanged?.();
+      cancelEdit();
+    } catch (err) {
+      setError(apiError(err, "Could not take that field off the map."));
+    } finally {
+      setBusy(false);
+      setConfirmRemove(null);
+    }
   };
 
   const saveEdit = async () => {
@@ -239,6 +265,41 @@ export default function ZoneHeatmap({ rows, zones, onZonesChanged }) {
                   <LuX size={13} /> Cancel
                 </button>
               </div>
+              {editing?.placed && (
+                confirmRemove === editing.id ? (
+                  <div className="mt-2 rounded-lg bg-rose-50 p-2 ring-1 ring-rose-200">
+                    <p className="text-[11px] text-rose-800">
+                      Take {editing.label} off the map? Its workers, yield and
+                      history are kept — only the pin is cleared.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => removeFromMap(editing)}
+                        disabled={busy}
+                        className="flex-1 rounded-lg bg-rose-600 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-40"
+                      >
+                        {busy ? "Removing…" : "Remove"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRemove(null)}
+                        className="rounded-lg px-2 py-1 text-[11px] font-bold text-rose-700"
+                      >
+                        Keep
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(editing.id)}
+                    className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50"
+                  >
+                    <LuTrash2 size={13} /> Remove from map
+                  </button>
+                )
+              )}
             </div>
           ) : (
             <div className="rounded-xl bg-white p-4 ring-1 ring-[#13483B59]">

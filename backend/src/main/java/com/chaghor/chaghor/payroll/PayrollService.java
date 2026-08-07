@@ -390,8 +390,17 @@ public class PayrollService {
     // gradeBonus = every kg graded 'A' x gradeBonusRate.
     //          Both are sourced from the Leaf Collection module for this period.
     private void recompute(Payroll p, Worker w, PayrollConfig cfg, LocalDate start, LocalDate end) {
+        // Base pay counts PRESENT + LATE.
+        //
+        // V22 added the `late` status and nothing here was told about it, so a
+        // worker marked late silently earned zero base for that day -- a full
+        // day's wage lost for arriving behind time. They did the day's work;
+        // lateness is a discipline matter, not a wage cut, and the minutes are
+        // recorded on the row (V24) for whoever wants to act on the pattern.
         long present = attendanceRepository.countByWorkerIdAndWorkDateBetweenAndStatus(
-                w.getId(), start, end, AttendanceStatus.present);
+                w.getId(), start, end, AttendanceStatus.present)
+                + attendanceRepository.countByWorkerIdAndWorkDateBetweenAndStatus(
+                w.getId(), start, end, AttendanceStatus.late);
         BigDecimal wage = w.getDailyWage() != null ? w.getDailyWage() : cfg.getBaseDailyWage();
         BigDecimal base = wage.multiply(BigDecimal.valueOf(present));
 

@@ -16,6 +16,10 @@ public interface LeafCollectionRepository extends JpaRepository<LeafCollection, 
 
     long countByCollectDate(LocalDate collectDate);
 
+    // Has this exact queued weigh-in already been accepted? Guards against a
+    // replayed offline write inserting a duplicate row.
+    java.util.Optional<LeafCollection> findFirstByClientUuid(java.util.UUID clientUuid);
+
     // Every weigh-in across a date range, for the collection trend chart. One
     // query for the whole window rather than fourteen per-day calls.
     List<LeafCollection> findByCollectDateBetween(LocalDate start, LocalDate end);

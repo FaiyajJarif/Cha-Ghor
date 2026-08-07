@@ -22,4 +22,9 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     // Every mark across a date range, for the supervisor dashboard's 7-day
     // trend. One query for the whole window rather than seven per-day calls.
     List<Attendance> findByWorkDateBetween(LocalDate start, LocalDate end);
+
+    // One worker's marks across a range, oldest first — the monthly history
+    // view. Backed by idx_attendance_worker_date (V24).
+    List<Attendance> findByWorkerIdAndWorkDateBetweenOrderByWorkDateAsc(
+            Long workerId, LocalDate start, LocalDate end);
 }

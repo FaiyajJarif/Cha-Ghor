@@ -4,6 +4,7 @@ import com.chaghor.chaghor.zone.dto.FieldResponse;
 import com.chaghor.chaghor.zone.dto.FieldStateRequest;
 import com.chaghor.chaghor.zone.dto.ZoneGeometryRequest;
 import com.chaghor.chaghor.zone.dto.ZoneResponse;
+import com.chaghor.chaghor.zone.dto.ZoneUpsertRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -71,7 +73,7 @@ public class ZoneService {
         }
 
         List<FieldResponse> out = new ArrayList<>();
-        for (Zone z : repo.findAll()) {
+        for (Zone z : repo.findByArchivedAtIsNullOrderByNameAsc()) {
             ZoneResponse g = toResponse(z);
             BigDecimal kg = yield.getOrDefault(z.getId(), BigDecimal.ZERO)
                     .setScale(2, java.math.RoundingMode.HALF_UP);
@@ -120,9 +122,11 @@ public class ZoneService {
     }
 
     @Transactional(readOnly = true)
+    // Live fields only. An archived field must not reappear in a picker or on
+    // a map — that is the whole point of archiving it.
     public List<ZoneResponse> list() {
         List<ZoneResponse> out = new ArrayList<>();
-        for (Zone z : repo.findAll()) {
+        for (Zone z : repo.findByArchivedAtIsNullOrderByNameAsc()) {
             out.add(toResponse(z));
         }
         return out;
@@ -193,5 +197,102 @@ public class ZoneService {
                 z.getId(), z.getName(), z.getCode(),
                 z.getAreaHectare(), z.getTargetKgPerDay(),
                 placed, lat, lng, placed ? (radius == null ? 250 : radius) : null);
+    }
+
+    // ---- create / rename / retire ------------------------------------------
+
+    @Transactional
+    public ZoneResponse create(ZoneUpsertRequest req) {
+        Zone z = new Zone();
+        apply(z, req, null);
+        return toResponse(repo.save(z));
+    }
+
+    @Transactional
+    public ZoneResponse update(Long id, ZoneUpsertRequest req) {
+        Zone z = live(id);
+        apply(z, req, id);
+        return toResponse(repo.save(z));
+    }
+
+    // Retire a field. This is NOT a delete, and the difference matters:
+    // attendance.zone_id and leaf_collection.zone_id are ON DELETE SET NULL, so
+    // really deleting the row would strip the field attribution off every
+    // historical attendance mark and leaf weigh-in -- last season's yield per
+    // field would stop adding up, permanently and silently. Archiving hides the
+    // field from every picker and map while leaving all of that intact.
+    @Transactional
+    public ZoneResponse archive(Long id) {
+        Zone z = live(id);
+        z.setArchivedAt(OffsetDateTime.now());
+        return toResponse(repo.save(z));
+    }
+
+    @Transactional
+    public ZoneResponse restore(Long id) {
+        Zone z = repo.findById(id).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "That field could not be found."));
+        if (z.getArchivedAt() == null) {
+            return toResponse(z); // already live, nothing to do
+        }
+        // Its old code may have been reused while it was retired.
+        if (z.getCode() != null && !z.getCode().isBlank()) {
+            repo.findFirstByCodeIgnoreCaseAndArchivedAtIsNull(z.getCode().trim())
+                    .filter(other -> !other.getId().equals(z.getId()))
+                    .ifPresent(other -> {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                "Another field is already using the code " + z.getCode()
+                                        + ". Rename that one first, or give this field a new code.");
+                    });
+        }
+        z.setArchivedAt(null);
+        return toResponse(repo.save(z));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ZoneResponse> archived() {
+        List<ZoneResponse> out = new ArrayList<>();
+        for (Zone z : repo.findAll()) {
+            if (z.getArchivedAt() != null) {
+                out.add(toResponse(z));
+            }
+        }
+        return out;
+    }
+
+    private Zone live(Long id) {
+        Zone z = repo.findById(id).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "That field could not be found."));
+        if (z.getArchivedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.GONE,
+                    "That field has been retired. Restore it before making changes.");
+        }
+        return z;
+    }
+
+    private void apply(Zone z, ZoneUpsertRequest req, Long selfId) {
+        String name = req.name() == null ? "" : req.name().trim();
+        if (name.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Give the field a name.");
+        }
+        String code = req.code() == null ? null : req.code().trim();
+        if (code != null && code.isEmpty()) {
+            code = null;
+        }
+        // Checked here so the user gets a sentence instead of a raw constraint
+        // violation from ux_zones_code_active.
+        if (code != null) {
+            final String c = code;
+            repo.findFirstByCodeIgnoreCaseAndArchivedAtIsNull(c)
+                    .filter(other -> selfId == null || !other.getId().equals(selfId))
+                    .ifPresent(other -> {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                "The code " + c + " is already used by " + other.getName() + ".");
+                    });
+        }
+        z.setName(name);
+        z.setCode(code);
+        z.setAreaHectare(req.areaHectare());
+        z.setTargetKgPerDay(req.targetKgPerDay());
     }
 }

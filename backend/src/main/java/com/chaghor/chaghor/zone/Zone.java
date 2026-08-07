@@ -83,4 +83,10 @@ public class Zone {
 
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
+
+    // Retired, not deleted (V25). A field with a date here is hidden from every
+    // picker, map and board, while every attendance row and leaf weigh-in that
+    // ever pointed at it keeps its attribution. Null = live.
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
 }

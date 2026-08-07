@@ -1,7 +1,8 @@
 import { Outlet } from "react-router-dom";
-import { LuBell, LuSearch } from "react-icons/lu";
+import { LuSearch } from "react-icons/lu";
 import SupervisorSidebar from "./SupervisorSidebar";
 import ChaBot from "../admin/ChaBot";
+import NotificationBell from "../admin/NotificationBell";
 import OfflineBanner from "../OfflineBanner";
 import { useAuth } from "../../context/AuthContext";
 
@@ -41,12 +42,10 @@ export default function SupervisorLayout() {
             />
           </label>
           <div className="ml-auto flex items-center gap-4">
-            <span
-              className="grid h-9 w-9 place-items-center rounded-full bg-white/60 text-cg-ink/50"
-              title="Notifications are not wired on the supervisor console yet"
-            >
-              <LuBell size={17} />
-            </span>
+            {/* The real bell, same component the admin console uses. It opens
+                /ws/notifications and now receives case events too, so a report
+                raised by another supervisor lights this up without a reload. */}
+            <NotificationBell />
             <div className="text-right">
               <p className="text-sm font-bold leading-tight text-cg-ink">
                 {user?.displayName || user?.username || "Supervisor"}

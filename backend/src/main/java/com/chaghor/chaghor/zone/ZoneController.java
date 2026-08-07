@@ -4,6 +4,7 @@ import com.chaghor.chaghor.zone.dto.FieldResponse;
 import com.chaghor.chaghor.zone.dto.FieldStateRequest;
 import com.chaghor.chaghor.zone.dto.ZoneGeometryRequest;
 import com.chaghor.chaghor.zone.dto.ZoneResponse;
+import com.chaghor.chaghor.zone.dto.ZoneUpsertRequest;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -65,5 +66,42 @@ public class ZoneController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ZoneResponse clearGeometry(@PathVariable Long id) {
         return service.clearGeometry(id);
+    }
+
+    // ---- field management ---------------------------------------------------
+    //
+    // Admin only. Adding or retiring a field changes what every supervisor sees
+    // on their map and in every zone picker, so it is not a field-side action.
+
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ZoneResponse create(@Valid @RequestBody ZoneUpsertRequest req) {
+        return service.create(req);
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ZoneResponse update(@PathVariable Long id, @Valid @RequestBody ZoneUpsertRequest req) {
+        return service.update(id, req);
+    }
+
+    // Retires the field. Deliberately NOT a destructive delete -- see
+    // ZoneService.archive for why the history would not survive one.
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ZoneResponse archive(@PathVariable Long id) {
+        return service.archive(id);
+    }
+
+    @PostMapping("/{id}/restore")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ZoneResponse restore(@PathVariable Long id) {
+        return service.restore(id);
+    }
+
+    @GetMapping("/archived")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<ZoneResponse> archived() {
+        return service.archived();
     }
 }

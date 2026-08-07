@@ -281,14 +281,75 @@ export default function SupervisorWeather() {
     return { headline, lines };
   }, [available, weather, hourly]);
 
-  // The four action buttons. Send Weather Alert and Notify Workers have no
-  // endpoint a supervisor can call yet -- /notifications/broadcast is
-  // @PreAuthorize ADMIN, so wiring them now would fire a 403 at a supervisor
-  // standing in a field. They say so instead of failing silently.
-  const pending = (what) =>
-    setNotice(
-      `${what} is not connected yet — the broadcast endpoint is admin-only today. Nothing was sent.`,
-    );
+  // The reading, written out as a sentence a supervisor can send as-is.
+  // Only the measurements we actually have are included -- a missing wind
+  // reading is left out rather than reported as 0 km/h.
+  const readingSentence = () => {
+    if (!available) return "";
+    const bits = [];
+    if (weather.condition) bits.push(weather.condition.toLowerCase());
+    if (weather.tempC !== null && weather.tempC !== undefined) bits.push(`${weather.tempC}°C`);
+    if (weather.rainProbPct !== null && weather.rainProbPct !== undefined)
+      bits.push(`${weather.rainProbPct}% chance of rain`);
+    if (weather.humidity !== null && weather.humidity !== undefined)
+      bits.push(`${weather.humidity}% humidity`);
+    if (weather.windKph !== null && weather.windKph !== undefined)
+      bits.push(`wind ${weather.windKph} km/h`);
+    return bits.join(", ");
+  };
+
+  // Hand a prefilled message to the Broadcast screen.
+  //
+  // DELIBERATELY not a direct send. These reach every supervisor on the estate,
+  // and a mis-tapped button on a phone in a wet field should not page everyone.
+  // The composer opens with the text already written; a human presses Send.
+  //
+  // It posts a FieldCase, which is @PreAuthorize("isAuthenticated()") -- so this
+  // works for a supervisor today with no permission change. The older
+  // /notifications/broadcast route is still admin-only and is not used here.
+  const compose = (pre) => {
+    if (!available) {
+      setNotice(
+        "There is no weather reading to send yet. Press Refresh first, then try again.",
+      );
+      return;
+    }
+    navigate("/supervisor/broadcast", { state: { compose: pre } });
+  };
+
+  const sendWeatherAlert = () =>
+    compose({
+      caseType: "REPORT",
+      category: "Weather",
+      priority: Number(weather?.rainProbPct) >= 70 ? "URGENT" : "HIGH",
+      title: `Weather alert — ${weather?.condition || "conditions changing"}`,
+      body:
+        `Current reading for the estate: ${readingSentence()}.\n\n` +
+        (advice ? `${advice.headline}\n\n` : "") +
+        (advice ? advice.lines.map((l) => `- ${l.text}`).join("\n") + "\n\n" : "") +
+        `Recorded ${stamp(weather?.observedAt)}.`,
+    });
+
+  const notifyWorkers = () =>
+    compose({
+      caseType: "REPORT",
+      category: "Shift notice",
+      priority: "HIGH",
+      title: "Working conditions for today",
+      body:
+        `Conditions on the estate right now: ${readingSentence()}.\n\n` +
+        (advice ? `${advice.headline}\n\n` : "") +
+        "Please pass this on to your teams at the muster point.",
+    });
+
+  const reportIssue = () =>
+    compose({
+      caseType: "REPORT",
+      category: "Field condition",
+      priority: "MEDIUM",
+      title: "",
+      body: `Weather at the time of reporting: ${readingSentence()}.\n\n`,
+    });
 
   return (
     <div className="space-y-6">
@@ -699,47 +760,38 @@ export default function SupervisorWeather() {
               key: "alert",
               Icon: LuMegaphone,
               label: "Send weather alert",
-              onClick: () => pending("Send weather alert"),
-              live: false,
+              onClick: sendWeatherAlert,
+              hint: "Opens Broadcast with the reading written up. You press Send.",
             },
             {
               key: "notify",
               Icon: LuUserPlus,
               label: "Notify workers",
-              onClick: () => pending("Notify workers"),
-              live: false,
+              onClick: notifyWorkers,
+              hint: "Opens Broadcast with a shift notice drafted. You press Send.",
             },
             {
               key: "fields",
               Icon: LuEye,
               label: "View field condition",
               onClick: () => navigate("/supervisor/fields"),
-              live: true,
+              hint: "Go to the fields board.",
             },
             {
               key: "issue",
               Icon: LuTriangleAlert,
               label: "Report issue",
-              onClick: () => pending("Report issue"),
-              live: false,
+              onClick: reportIssue,
+              hint: "Raise a field report. Every supervisor and the admin will see it.",
             },
-          ].map(({ key, Icon, label, onClick, live }) => (
+          ].map(({ key, Icon, label, onClick, hint }) => (
             <button
               key={key}
               type="button"
               onClick={onClick}
-              title={
-                live
-                  ? undefined
-                  : "No endpoint behind this yet — it will tell you rather than fail silently."
-              }
-              className="relative flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-2xl bg-cg-dark px-4 py-5 text-center text-sm font-bold uppercase leading-tight tracking-wide text-white shadow transition hover:brightness-110"
+              title={hint}
+              className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-2xl bg-cg-dark px-4 py-5 text-center text-sm font-bold uppercase leading-tight tracking-wide text-white shadow transition hover:brightness-110"
             >
-              {!live && (
-                <span className="absolute right-2 top-2 rounded-full bg-white/20 px-2 py-0.5 text-[9px] font-bold normal-case tracking-normal">
-                  soon
-                </span>
-              )}
               <Icon size={20} />
               {label}
             </button>

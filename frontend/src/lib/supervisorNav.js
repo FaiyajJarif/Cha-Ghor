@@ -58,6 +58,6 @@ export const SUPERVISOR_NAV = [
     label: "Broadcast Message",
     path: "/supervisor/broadcast",
     icon: LuMessageSquare,
-    ready: false,
+    ready: true,
   },
 ];

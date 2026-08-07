@@ -1,6 +1,7 @@
 package com.chaghor.chaghor.fieldcase;
 
 import com.chaghor.chaghor.fieldcase.dto.*;
+import com.chaghor.chaghor.notification.NotificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -18,10 +19,28 @@ public class FieldCaseService {
 
     private final FieldCaseRepository cases;
     private final CaseReplyRepository replies;
+    // Live push. A case raised in the field has to reach the other supervisors
+    // and the admin without anyone reloading a page -- that is the whole point
+    // of the Broadcast board.
+    private final NotificationService notifications;
 
-    public FieldCaseService(FieldCaseRepository cases, CaseReplyRepository replies) {
+    public FieldCaseService(FieldCaseRepository cases, CaseReplyRepository replies,
+                            NotificationService notifications) {
         this.cases = cases;
         this.replies = replies;
+        this.notifications = notifications;
+    }
+
+    // Push an event to every open console. Never let a failed notification fail
+    // the write that caused it: the case is already saved and committed as far
+    // as the caller is concerned, and a dropped WebSocket frame must not turn a
+    // successful report into an error on a supervisor's phone.
+    private void push(String title, String body, String kind, Long refId) {
+        try {
+            notifications.send(title, body, kind, refId);
+        } catch (Exception ignored) {
+            // best-effort by design
+        }
     }
 
     public CaseSummaryResponse summary() {
@@ -99,6 +118,10 @@ public class FieldCaseService {
                 .evidenceUrl(emptyToNull(req.evidenceUrl()))
                 .build();
         FieldCase saved = cases.save(c);
+        push(saved.getTitle(),
+                (saved.getSubmitterName() == null ? "" : saved.getSubmitterName())
+                        + (saved.getZone() == null ? "" : " · " + saved.getZone()),
+                "case.created", saved.getId());
         return detail(saved.getId());
     }
 
@@ -127,6 +150,9 @@ public class FieldCaseService {
             c.setAssignedTo(userId);
         }
         cases.save(c);
+        push("Reply on: " + c.getTitle(),
+                (name == null ? "" : name) + " responded",
+                "case.replied", id);
         return detail(id);
     }
 
@@ -144,6 +170,9 @@ public class FieldCaseService {
             c.setResolvedAt(null);
         }
         cases.save(c);
+        push(c.getTitle(),
+                "Marked " + next.name().replace("_", " ").toLowerCase(),
+                "case.status", id);
         return detail(id);
     }
 

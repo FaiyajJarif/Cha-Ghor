@@ -14,11 +14,14 @@ import {
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import { queueOrSend, count as outboxCount, flush as outboxFlush } from "../../lib/outbox";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import AttendanceDrawer from "../../components/supervisor/AttendanceDrawer";
 import ZonePicker from "../../components/supervisor/ZonePicker";
 import ZoneHeatmap from "../../components/supervisor/ZoneHeatmap";
+import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
+import AttendanceAiPanel from "../../components/supervisor/AttendanceAiPanel";
 
 // Supervisor attendance register.
 //
@@ -31,6 +34,32 @@ import ZoneHeatmap from "../../components/supervisor/ZoneHeatmap";
 //
 // The backend upserts on UNIQUE(worker_id, work_date), so saving twice is safe
 // and re-saving a corrected register just overwrites it.
+
+
+// Idempotency key for one worker's mark in one save.
+//
+// Generated ONCE, here, and then persisted with the queued write in IndexedDB
+// -- so a replay sends the identical key and the server recognises it as the
+// same mark rather than a second edit. There is no need to derive it from the
+// data, and an earlier attempt that hashed (worker, date, time) was replaced
+// after a sweep of 42,000 keys turned up collisions: two workers sharing a key
+// would have had one of their marks silently discarded as a duplicate.
+function newUuid() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Older WebView / non-secure context. Still 122 bits of randomness.
+  const b = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(b);
+  } else {
+    for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  }
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10x
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
 const CARD_STROKE = "ring-1 ring-[#13483B59]";
 const PAGE_SIZE = 8;
@@ -110,6 +139,12 @@ export default function SupervisorAttendance() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // How many saves are sitting in the device outbox waiting for signal. Shown
+  // so a supervisor can see their work is held safely rather than lost, and
+  // knows not to close the app assuming it reached the estate office.
+  const [pending, setPending] = useState(0);
+  // Which worker's month is open. Null = closed.
+  const [monthFor, setMonthFor] = useState(null);
 
   const load = useCallback(async () => {
     const [w, m, a, s, t] = await Promise.all([
@@ -130,7 +165,11 @@ export default function SupervisorAttendance() {
     // attendance nobody actually took.
     const next = {};
     for (const row of a.data || []) {
-      next[row.workerId] = { status: row.status, zoneId: row.zoneId ?? null };
+      next[row.workerId] = {
+        status: row.status,
+        zoneId: row.zoneId ?? null,
+        lateMinutes: row.lateMinutes ?? null,
+      };
     }
     setDraft(next);
   }, [date]);
@@ -155,6 +194,30 @@ export default function SupervisorAttendance() {
     };
   }, [load]);
 
+  // Keep the pending badge honest, and push the queue the moment signal
+  // returns rather than waiting for the next Background Sync wake-up.
+  useEffect(() => {
+    let alive = true;
+    const refresh = () =>
+      outboxCount()
+        .then((n) => alive && setPending(n))
+        .catch(() => {});
+    refresh();
+    const onOnline = () => {
+      outboxFlush()
+        .then(refresh)
+        .then(() => alive && load().catch(() => {}))
+        .catch(() => {});
+    };
+    window.addEventListener("online", onOnline);
+    const timer = setInterval(refresh, 15000);
+    return () => {
+      alive = false;
+      window.removeEventListener("online", onOnline);
+      clearInterval(timer);
+    };
+  }, [load]);
+
   const activeWorkers = useMemo(
     () => workers.filter((w) => String(w.status).toLowerCase() === "active"),
     [workers],
@@ -171,6 +234,7 @@ export default function SupervisorAttendance() {
         jobRole: w.jobRole,
         status: draft[w.id]?.status ?? null,
         zoneId: draft[w.id]?.zoneId ?? null,
+        lateMinutes: draft[w.id]?.lateMinutes ?? null,
       })),
     [activeWorkers, draft],
   );
@@ -231,13 +295,43 @@ export default function SupervisorAttendance() {
     setNotice("");
   };
 
+  // Record HOW late, not just that they were late. The minutes are what let
+  // the AI layer tell a one-off from a persistent pattern, which is the whole
+  // reason this is stored rather than a boolean.
+  const setLateMinutes = (workerId, minutes) => {
+    setDraft((d) => ({
+      ...d,
+      [workerId]: {
+        ...(d[workerId] || {}),
+        status: d[workerId]?.status || "late",
+        lateMinutes:
+          minutes === "" || minutes === null
+            ? null
+            : Math.max(0, Math.min(1440, Number(minutes))),
+      },
+    }));
+    setNotice("");
+  };
+
   const save = async () => {
+    // markedAt is stamped HERE, at the moment the supervisor pressed Save --
+    // not when the request reaches the server. On a phone that has been out of
+    // signal those differ by hours, and the server uses this to decide
+    // conflicts: an office correction made at midday is not undone by a handset
+    // that reconnects at 17:00 still carrying the morning register.
+    const markedAt = new Date().toISOString();
     const entries = rows
       .filter((r) => r.status) // never save a worker nobody marked
       .map((r) => ({
         workerId: r.workerId,
         status: r.status,
         zoneId: r.zoneId ?? null,
+        // Only meaningful on a late row; the server ignores it otherwise.
+        lateMinutes: r.status === "late" ? (r.lateMinutes ?? null) : null,
+        // Stable per (worker, date, save) so a replayed batch is recognised as
+        // the same marks rather than applied twice.
+        clientUuid: newUuid(),
+        markedAt,
       }));
     if (entries.length === 0) {
       setError("Mark at least one worker before saving.");
@@ -246,7 +340,22 @@ export default function SupervisorAttendance() {
     setSaving(true);
     setError("");
     try {
-      await api.post("/attendance/bulk", { date, entries });
+      // queueOrSend tries the network first and falls back to the IndexedDB
+      // outbox, which the service worker replays on Background Sync. A
+      // supervisor in a dead spot can finish the register and walk away.
+      const { queued } = await queueOrSend({
+        path: "/attendance/bulk",
+        body: { date, entries },
+        clientUuid: newUuid(),
+      });
+
+      if (queued) {
+        setNotice(
+          `No network — ${entries.length} marks for ${date} are saved on this device and will sync by themselves when you are back in signal. You can close the app.`,
+        );
+        return;
+      }
+
       const { data } = await api.get("/attendance/summary", { params: { date } });
       setSummary(data);
       setNotice(`Saved ${entries.length} records for ${date}.`);
@@ -404,6 +513,17 @@ export default function SupervisorAttendance() {
           >
             <LuSave size={15} /> {saving ? "Saving…" : "Save Attendance Data"}
           </button>
+          {/* Held-on-device count. A supervisor who saved in a dead spot needs
+              to see their work is safe, not wonder whether it vanished. */}
+          {pending > 0 && (
+            <span
+              title="Saved on this device. It uploads by itself when signal returns — you can close the app."
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-amber-300"
+            >
+              <LuClock size={14} />
+              {pending} waiting to sync
+            </span>
+          )}
         </div>
       </div>
 
@@ -445,8 +565,21 @@ export default function SupervisorAttendance() {
                       #CG{String(r.workerId).padStart(3, "0")}
                     </td>
                     <td className="px-5 py-3">
-                      <p className="font-semibold text-cg-ink">{r.name}</p>
-                      <p className="text-xs text-cg-ink/40">{r.jobRole}</p>
+                      {/* Opens this worker's month: present / late / absent,
+                          and how many days nobody marked. */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMonthFor({ id: r.workerId, name: r.name })
+                        }
+                        title={`See ${r.name}'s attendance this month`}
+                        className="text-left"
+                      >
+                        <p className="font-semibold text-cg-ink underline decoration-cg-green/30 underline-offset-2 hover:decoration-cg-green">
+                          {r.name}
+                        </p>
+                        <p className="text-xs text-cg-ink/40">{r.jobRole}</p>
+                      </button>
                     </td>
                     <td className="px-5 py-3">
                       {/* Only someone who turned up can be sent to a field. */}
@@ -471,6 +604,26 @@ export default function SupervisorAttendance() {
                       >
                         {r.status || "Not marked"}
                       </span>
+                      {/* How late, only where it means anything. Left blank
+                          rather than defaulted to 0, because "late by an amount
+                          nobody wrote down" is a different fact from "on time". */}
+                      {r.status === "late" && (
+                        <span className="mt-1 flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1440}
+                            value={r.lateMinutes ?? ""}
+                            onChange={(e) => setLateMinutes(r.workerId, e.target.value)}
+                            placeholder="—"
+                            aria-label={`Minutes late for ${r.name}`}
+                            className="w-16 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 outline-none focus:border-amber-500"
+                          />
+                          <span className="text-[10px] font-semibold text-cg-ink/40">
+                            min late
+                          </span>
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <button
@@ -520,8 +673,11 @@ export default function SupervisorAttendance() {
           <h2 className="font-bold text-cg-ink">Attendance Insights</h2>
           <InfoTip text="Each field is coloured by how much of its assigned crew turned up today, using the register on this page. Workers count towards the field they are assigned to, or their home zone if none was set." />
         </div>
-        <ZoneHeatmap rows={rows} zones={zones} />
+        <ZoneHeatmap rows={rows} zones={zones} onZonesChanged={load} />
       </div>
+
+      {/* AI: register checks + month review */}
+      <AttendanceAiPanel date={date} marked={summary?.marked ?? 0} />
 
       {/* History + summary */}
       <div className="grid gap-6 lg:grid-cols-3">
@@ -696,6 +852,13 @@ export default function SupervisorAttendance() {
           </p>
         </div>
       )}
+
+      <WorkerMonthModal
+        open={!!monthFor}
+        workerId={monthFor?.id}
+        workerName={monthFor?.name}
+        onClose={() => setMonthFor(null)}
+      />
 
       <AttendanceDrawer
         open={drawerOpen}

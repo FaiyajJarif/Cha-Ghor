@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../api/client";
 import Avatar from "../../components/admin/Avatar";
@@ -22,6 +22,9 @@ import {
 } from "react-icons/lu";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
+import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
 import { WORKER_LEADERBOARD } from "../../lib/adminSample";
 import ChaBot from "../../components/admin/ChaBot";
 
@@ -362,6 +365,61 @@ export default function Workforce() {
     loadAttendance(attDate);
   };
 
+  // Live attendance.
+  //
+  // A supervisor marking the register in the field pushes an "attendance.saved"
+  // frame; this board refetches so the admin sees it without reloading. Held in
+  // a ref because loadAttendance is recreated whenever `workers` changes, and
+  // depending on it directly would tear the socket down and rebuild it.
+  const attRef = useRef(null);
+  const [attLive, setAttLive] = useState(false);
+  // Which worker's monthly attendance is open. Null = closed.
+  const [monthFor, setMonthFor] = useState(null);
+
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return; // blocked URL — the board still works, just not live
+      }
+      ws.onopen = () => setAttLive(true);
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        // Only attendance frames. Refetching on every unrelated notification
+        // would hammer the API for nothing.
+        if (kind === "attendance.saved" && attRef.current) {
+          attRef.current();
+        }
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        setAttLive(false);
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
+
   const loadAttendance = useCallback(
     async (date) => {
       // Default everyone to absent (matches the sheet's default), then apply
@@ -382,6 +440,12 @@ export default function Workforce() {
     },
     [workers],
   );
+
+  // Keep the socket handler pointed at the current loader and date without
+  // making the socket itself depend on either.
+  useEffect(() => {
+    attRef.current = () => loadAttendance(attDate);
+  }, [loadAttendance, attDate]);
 
   const setStatus = (id, status) => {
     setAtt((a) => ({ ...a, [id]: status }));
@@ -599,7 +663,16 @@ export default function Workforce() {
                 filtered.map((w) => (
                   <tr key={w.id} className="border-b border-cg-green/5">
                     <td className="py-2 pr-4 font-medium text-cg-ink">
-                      {w.fullName}
+                      {/* Opens this worker's month: present / late / absent,
+                          and the days nobody marked at all. */}
+                      <button
+                        type="button"
+                        onClick={() => setMonthFor({ id: w.id, name: w.fullName })}
+                        title={`See ${w.fullName}'s attendance this month`}
+                        className="underline decoration-cg-green/30 underline-offset-2 hover:decoration-cg-green"
+                      >
+                        {w.fullName}
+                      </button>
                       {w.username && (
                         <span className="ml-2 rounded bg-cg-lime px-1.5 py-0.5 text-[10px] font-semibold text-cg-green">
                           @{w.username}
@@ -962,8 +1035,29 @@ export default function Workforce() {
               {/* Header */}
               <div className="flex shrink-0 items-center justify-between gap-3 px-6 py-4">
                 <div>
-                  <h3 className="text-xl font-extrabold text-cg-ink">
+                  <h3 className="flex flex-wrap items-center gap-2 text-xl font-extrabold text-cg-ink">
                     Daily Attendance
+                    {/* Reflects the real socket. When it says Live, a mark made
+                        by a supervisor in the field lands here on its own. */}
+                    <span
+                      title={
+                        attLive
+                          ? "Connected. Marks saved by supervisors appear here as they happen."
+                          : "Not connected. The register is still correct, it just will not update on its own."
+                      }
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                        attLive
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          attLive ? "animate-pulse bg-emerald-500" : "bg-slate-400"
+                        }`}
+                      />
+                      {attLive ? "Live" : "Offline"}
+                    </span>
                   </h3>
                   <p className="text-sm text-cg-ink/60">
                     {prettyDate(attDate)}
@@ -1203,6 +1297,13 @@ export default function Workforce() {
           </div>,
           document.body,
         )}
+
+      <WorkerMonthModal
+        open={!!monthFor}
+        workerId={monthFor?.id}
+        workerName={monthFor?.name}
+        onClose={() => setMonthFor(null)}
+      />
     </div>
   );
 }
