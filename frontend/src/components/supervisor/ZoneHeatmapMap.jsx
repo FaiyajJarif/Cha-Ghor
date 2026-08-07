@@ -5,6 +5,7 @@ import {
   Circle,
   Marker,
   Tooltip,
+  Popup,
   useMap,
   useMapEvents,
 } from "react-leaflet";
@@ -81,7 +82,22 @@ function Recenter({ center, zoom }) {
   return null;
 }
 
+// Click-to-place. Enabled either when a specific field is being moved
+// (editingZoneId) OR when the page is in "drop a new marker" mode — the Fields
+// board uses the second, where you click first and choose the field after.
+//
+// The crosshair cursor is set imperatively on the map container: without it
+// there is no signal that the map has become clickable, which is exactly why
+// placing felt broken.
 function ClickToPlace({ enabled, onPick }) {
+  const map = useMap();
+  useEffect(() => {
+    const el = map.getContainer();
+    el.style.cursor = enabled ? "crosshair" : "";
+    return () => {
+      el.style.cursor = "";
+    };
+  }, [enabled, map]);
   useMapEvents({
     click(e) {
       if (enabled) onPick([e.latlng.lat, e.latlng.lng]);
@@ -358,9 +374,16 @@ function BasemapSwitch({ value, onChange }) {
 export default function ZoneHeatmapMap({
   tiles,
   editingZoneId,
+  // `placing` lets a page accept a click WITHOUT having picked a field first —
+  // the Fields board drops the marker, then asks which field it is.
+  placing = false,
   draftPosition,
   draftRadiusM,
   onPick,
+  // Actions offered when a placed field is clicked on the map. Without these
+  // there was no way to move or un-place a marker once it was down.
+  onMoveField,
+  onRemoveField,
   center,
   height = 460,
 }) {
@@ -397,7 +420,7 @@ export default function ZoneHeatmapMap({
           maxZoom={base.max}
         />
         <Recenter center={center || homeSignal} />
-        <ClickToPlace enabled={!!editingZoneId} onPick={onPick} />
+        <ClickToPlace enabled={!!editingZoneId || placing} onPick={onPick} />
         <MapControls
           tiles={tiles}
           onGoHome={() => setHomeSignal([home[0] + Math.random() * 1e-9, home[1]])}
@@ -441,15 +464,61 @@ export default function ZoneHeatmapMap({
                   </span>
                 </Tooltip>
               </Circle>
-              <Marker position={pos} icon={zoneIcon(t.label, t.band, t.pct)} />
+              <Marker position={pos} icon={zoneIcon(t.label, t.band, t.pct)}>
+                {(onMoveField || onRemoveField) && (
+                  <Popup>
+                    <div style={{ minWidth: 150 }}>
+                      <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: "#14493B" }}>
+                        {t.label}
+                      </p>
+                      <p style={{ margin: "2px 0 8px", fontSize: 11, color: "#666" }}>
+                        {t.assigned > 0
+                          ? `${t.pct}% · ${t.present}/${t.assigned}`
+                          : "no one assigned today"}
+                      </p>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {onMoveField && (
+                          <button
+                            type="button"
+                            onClick={() => onMoveField(t)}
+                            style={{
+                              flex: 1, border: "none", cursor: "pointer",
+                              background: "#14493B", color: "#fff",
+                              borderRadius: 6, padding: "5px 8px",
+                              fontSize: 11, fontWeight: 700,
+                            }}
+                          >
+                            Move
+                          </button>
+                        )}
+                        {onRemoveField && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveField(t)}
+                            style={{
+                              flex: 1, cursor: "pointer",
+                              background: "#fff", color: "#b91c1c",
+                              border: "1px solid #fca5a5",
+                              borderRadius: 6, padding: "5px 8px",
+                              fontSize: 11, fontWeight: 700,
+                            }}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </Popup>
+                )}
+              </Marker>
             </Fragment>
           );
         })}
 
-        {/* A field being placed for the first time has no stored circle yet. */}
-        {editingZoneId &&
-          draftPosition &&
-          !placed.some((t) => t.id === editingZoneId) && (
+        {/* A marker dropped before a field is chosen, or a field being placed
+            for the first time, has no stored circle to reuse. */}
+        {draftPosition &&
+          (placing || (editingZoneId && !placed.some((t) => t.id === editingZoneId))) && (
             <Circle
               center={draftPosition}
               radius={draftRadiusM ?? 250}

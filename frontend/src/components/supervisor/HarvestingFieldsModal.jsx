@@ -41,7 +41,7 @@ const SELECT =
 
 function Stat({ icon: Icon, label, value, tone }) {
   return (
-    <div className="rounded-xl bg-[#CFE8DB]/60 p-2 text-center">
+    <div className="rounded-xl bg-[#C0F28B] p-2 text-center">
       <Icon size={14} className="mx-auto text-[#14493B]/60" />
       <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-[#14493B]/50">
         {label}
@@ -123,8 +123,8 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[90] bg-black/40" onClick={onClose} aria-hidden />
-      <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
+      <div className="fixed inset-0 z-[1210] flex items-center justify-center p-4">
         <div
           className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
           onClick={(e) => e.stopPropagation()}
@@ -176,7 +176,7 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
             ))}
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-[#F3FBEE] p-6">
+          <div className="flex-1 overflow-y-auto bg-white p-6">
             {error && (
               <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
             )}
@@ -192,7 +192,7 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
                   return (
                     <div
                       key={f.id}
-                      className="flex flex-col overflow-hidden rounded-2xl bg-[#CFE8DB]/50 ring-1 ring-[#13483B59]"
+                      className="flex flex-col overflow-hidden rounded-2xl bg-[#D3FFAC] ring-1 ring-[#13483B59]"
                     >
                       {/* Photo, or a coloured band when none has been taken */}
                       <div className="relative h-36 w-full">
@@ -269,7 +269,7 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
                             <span>Harvest progress</span>
                             <span>{pct === null ? "no target" : `${pct}%`}</span>
                           </div>
-                          <div className="mt-1 h-2.5 w-full rounded-full bg-white">
+                          <div className="mt-1 h-2.5 w-full rounded-full bg-white/80">
                             {pct !== null && (
                               <div
                                 className={`h-2.5 rounded-full ${cond.bar}`}
@@ -291,14 +291,18 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
             )}
           </div>
 
-          <div className="flex items-center justify-between bg-[#D3FFAC] px-6 py-3">
-            <span className="text-xs text-[#14493B]/60">
+          {/* Footer mirrors the header bar so the modal is bookended by the
+              same dark green, rather than trailing off into a pale strip. The
+              button inverts to white-on-dark, since a dark button on a dark bar
+              would disappear. */}
+          <div className={`flex items-center justify-between ${HEADER} px-6 py-4`}>
+            <span className="text-xs text-white/70">
               Showing {shown.length} of {fields.length} fields
             </span>
             <button
               type="button"
               onClick={onClose}
-              className={`rounded-xl ${HEADER} px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110`}
+              className="rounded-xl bg-white px-5 py-2 text-sm font-bold text-[#14493B] transition hover:bg-white/90"
             >
               Done
             </button>

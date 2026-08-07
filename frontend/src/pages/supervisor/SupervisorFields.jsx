@@ -7,6 +7,8 @@ import {
   LuChevronLeft,
   LuChevronRight,
   LuExternalLink,
+  LuCalendarPlus,
+  LuMapPin,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
@@ -14,6 +16,8 @@ import { BTN_DARK } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import HarvestingFieldsModal from "../../components/supervisor/HarvestingFieldsModal";
+import CreateScheduleModal from "../../components/supervisor/CreateScheduleModal";
+import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
 
 // Field & Zonal Management.
 //
@@ -72,10 +76,28 @@ export default function SupervisorFields() {
   const [error, setError] = useState("");
   const [page, setPage] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [workers, setWorkers] = useState([]);
+  // Harvest schedules live here only. harvest_schedule has existed since V1 but
+  // has no backend yet, so these are deliberately not persisted — the table and
+  // the success card both say so rather than implying a plan was saved.
+  const [schedules, setSchedules] = useState([]);
+  const [schedPageNo, setSchedPageNo] = useState(0);
+  // Placing a field: click the map to drop a marker, then say which field it is.
+  const [placing, setPlacing] = useState(false);
+  const [dropped, setDropped] = useState(null);
+  // When Move is chosen on a marker, the next map click relocates THAT field
+  // rather than opening the "which field is this?" dialog.
+  const [movingField, setMovingField] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   const load = useCallback(async () => {
-    const { data } = await api.get("/zones/fields", { params: { date } });
-    setFields(data || []);
+    const [f, w] = await Promise.all([
+      api.get("/zones/fields", { params: { date } }),
+      api.get("/workers"),
+    ]);
+    setFields(f.data || []);
+    setWorkers(w.data || []);
   }, [date]);
 
   useEffect(() => {
@@ -149,6 +171,55 @@ export default function SupervisorFields() {
 
   const unplaced = fields.filter((f) => !f.placed).length;
 
+  // Move: arm placing mode for one specific field.
+  const startMove = (tile) => {
+    setMovingField(tile);
+    setPlacing(true);
+    setDropped(null);
+    setError("");
+  };
+
+  // The next click while moving relocates that field directly — no dialog,
+  // because we already know which field it is.
+  const handlePick = async (pos) => {
+    if (!movingField) {
+      setDropped(pos);
+      return;
+    }
+    try {
+      await api.put(`/zones/${movingField.id}/geometry`, {
+        lat: pos[0],
+        lng: pos[1],
+        radiusM: movingField.radiusM ?? 250,
+      });
+      await load();
+    } catch (err) {
+      setError(apiError(err, "Could not move that field."));
+    } finally {
+      setMovingField(null);
+      setPlacing(false);
+    }
+  };
+
+  // Remove only clears the POSITION. The field itself, its history and its
+  // targets are untouched — this is un-pinning, not deleting a zone.
+  const removeFromMap = async (tile) => {
+    try {
+      await api.delete(`/zones/${tile.id}/geometry`);
+      await load();
+    } catch (err) {
+      setError(apiError(err, "Could not remove that field from the map."));
+    } finally {
+      setConfirmRemove(null);
+    }
+  };
+
+  const schedTotalPages = Math.max(1, Math.ceil(schedules.length / PAGE_SIZE));
+  const schedPage = schedules.slice(
+    schedPageNo * PAGE_SIZE,
+    schedPageNo * PAGE_SIZE + PAGE_SIZE,
+  );
+
   if (loading) {
     return (
       <div className="grid h-64 place-items-center text-sm text-cg-ink/60">
@@ -215,13 +286,30 @@ export default function SupervisorFields() {
             <h2 className="font-bold text-cg-ink">Field Map</h2>
             <InfoTip text="Each placed field is drawn as a circle coloured by its ground condition. Fields in maintenance are greyed. Place or move a field from the Attendance board's heatmap." />
           </div>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="rounded-xl bg-[#14493B] px-4 py-2 text-xs font-bold text-white transition hover:brightness-110"
-          >
-            View details
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setPlacing((p) => !p);
+                setDropped(null);
+              }}
+              className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
+                placing
+                  ? "bg-[#14493B] text-white"
+                  : "bg-[#D3FFAC] text-[#14493B] hover:brightness-95"
+              }`}
+            >
+              <LuMapPin size={14} className="mr-1 inline" />
+              {placing ? "Click the map…" : "Place a field"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="rounded-xl bg-[#14493B] px-4 py-2 text-xs font-bold text-white transition hover:brightness-110"
+            >
+              View details
+            </button>
+          </div>
         </div>
         <ErrorBoundary fallback={<MapFallback />}>
           <Suspense
@@ -232,9 +320,39 @@ export default function SupervisorFields() {
               </div>
             }
           >
-            <ZoneHeatmapMap tiles={mapTiles} height={MAP_H} />
+            <ZoneHeatmapMap
+              tiles={mapTiles}
+              height={MAP_H}
+              placing={placing}
+              draftPosition={dropped}
+              draftRadiusM={250}
+              onPick={handlePick}
+              onMoveField={startMove}
+              onRemoveField={(t) => setConfirmRemove(t)}
+            />
           </Suspense>
         </ErrorBoundary>
+        {placing && !dropped && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[#D3FFAC] px-3 py-2 text-xs font-semibold text-[#14493B]">
+            {movingField
+              ? `Click the new position for ${movingField.label}.`
+              : "Click anywhere on the map to drop a marker, then choose which field it is."}
+            <button
+              type="button"
+              onClick={() => {
+                setPlacing(false);
+                setMovingField(null);
+                setDropped(null);
+              }}
+              className="ml-auto rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-[#14493B]"
+            >
+              Cancel
+            </button>
+          </p>
+        )}
+        <p className="mt-2 text-[11px] text-cg-ink/50">
+          Click any marker on the map to move it or remove it from the map.
+        </p>
         <ul className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-cg-ink/60">
           {[
             ["#3f8f43", "Good condition"],
@@ -249,6 +367,213 @@ export default function SupervisorFields() {
             </li>
           ))}
         </ul>
+      </div>
+
+      {/* Upcoming Harvest Schedule */}
+      <div className={`overflow-hidden rounded-2xl bg-white shadow ${CARD_STROKE}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#C0F28B] px-5 py-3">
+          <div className="flex items-center gap-2 font-bold text-cg-ink">
+            Upcoming Harvest Schedule
+            <InfoTip text="Planned harvest and maintenance work per field. Not saved to the server yet — the harvest_schedule table exists but has no backend, so these are lost on reload." />
+          </div>
+          <button
+            type="button"
+            onClick={() => setScheduleOpen(true)}
+            className="rounded-xl bg-[#14493B] px-4 py-2 text-xs font-bold text-white transition hover:brightness-110"
+          >
+            <LuCalendarPlus size={14} className="mr-1 inline" /> Create Harvest
+            Schedule
+          </button>
+        </div>
+
+        {schedules.length === 0 ? (
+          <div className="grid h-40 place-items-center px-6 text-center text-sm text-cg-ink/50">
+            No harvest work scheduled. Use{" "}
+            <span className="mx-1 font-semibold">Create Harvest Schedule</span>{" "}
+            to plan one.
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
+                  <tr>
+                    <th className="bg-[#D3FFAC] px-5 py-3">Created</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3">Field</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3">Task</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3">Type</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3 text-right">Expected</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3">Status</th>
+                    <th className="bg-[#D3FFAC] px-5 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-cg-green/10">
+                  {schedPage.map((s) => (
+                    <tr key={s.id} className="hover:bg-cg-lime/20">
+                      <td className="px-5 py-3 text-cg-ink/70">
+                        {new Date(s.createdAt).toLocaleString("en-GB", {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-5 py-3 font-semibold text-cg-green">
+                        {s.zoneName}
+                      </td>
+                      <td className="px-5 py-3">
+                        <p className="font-semibold text-cg-ink">{s.title}</p>
+                        {s.worker ? (
+                          <p className="text-xs text-cg-ink/40">{s.worker}</p>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-3 text-cg-ink/70">{s.type}</td>
+                      <td className="px-5 py-3 text-right tabular-nums text-cg-ink">
+                        {s.expectedKg ? `${s.expectedKg} kg` : "—"}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            s.status === "draft"
+                              ? "bg-slate-100 text-slate-600"
+                              : "bg-sky-100 text-sky-700"
+                          }`}
+                        >
+                          {s.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSchedules((list) => list.filter((x) => x.id !== s.id))
+                          }
+                          className="text-xs font-semibold text-rose-600 hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between gap-3 bg-[#D3FFAC] px-5 py-3 text-sm">
+              <span className="text-xs font-semibold text-cg-ink/70">
+                Showing {schedPage.length} of {schedules.length} — not saved to
+                the server
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSchedPageNo((p) => Math.max(0, p - 1))}
+                  disabled={schedPageNo === 0}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-cg-ink/70 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <LuChevronLeft size={15} /> Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSchedPageNo((p) => Math.min(schedTotalPages - 1, p + 1))
+                  }
+                  disabled={schedPageNo + 1 >= schedTotalPages}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-cg-ink/70 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next <LuChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Field Conditions Detailed Analysis */}
+      <div className={`overflow-hidden rounded-2xl bg-white shadow ${CARD_STROKE}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#C0F28B] px-5 py-3">
+          <div className="flex items-center gap-2 font-bold text-cg-ink">
+            Field Conditions — Detailed Analysis
+            <InfoTip text="Workers and harvest per field for the selected day, against that field's target. Expected is the field's daily target; harvested is what was actually weighed in." />
+          </div>
+          <span className="text-xs font-semibold text-cg-ink/70">
+            {date}
+          </span>
+        </div>
+        {fields.length === 0 ? (
+          <div className="grid h-40 place-items-center text-sm text-cg-ink/50">
+            No fields to analyse.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
+                <tr>
+                  <th className="bg-[#D3FFAC] px-5 py-3">Field</th>
+                  <th className="bg-[#D3FFAC] px-5 py-3">Condition</th>
+                  <th className="bg-[#D3FFAC] px-5 py-3">Workers</th>
+                  <th className="bg-[#D3FFAC] px-5 py-3 text-right">Expected</th>
+                  <th className="bg-[#D3FFAC] px-5 py-3 text-right">Harvested</th>
+                  <th className="bg-[#D3FFAC] px-5 py-3">Result</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-cg-green/10">
+                {fields.map((f) => {
+                  const target = Number(f.targetKgPerDay || 0);
+                  const got = Number(f.yieldKg || 0);
+                  const met = target > 0 && got >= target;
+                  const cond =
+                    f.condition === "poor"
+                      ? "bg-rose-100 text-rose-700"
+                      : f.condition === "caution"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-emerald-100 text-emerald-700";
+                  return (
+                    <tr key={f.id} className="hover:bg-cg-lime/20">
+                      <td className="px-5 py-3">
+                        <p className="font-semibold text-cg-green">{f.name}</p>
+                        {f.fieldNote ? (
+                          <p className="text-xs text-cg-ink/40">{f.fieldNote}</p>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${cond}`}>
+                          {f.condition}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-cg-ink/70">
+                        {f.workersPresent} member
+                        {f.workersPresent === 1 ? "" : "s"}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums text-cg-ink/70">
+                        {target > 0 ? `${target.toFixed(0)} kg` : "—"}
+                      </td>
+                      <td
+                        className={`px-5 py-3 text-right font-bold tabular-nums ${
+                          target > 0 && !met ? "text-rose-600" : "text-cg-green"
+                        }`}
+                      >
+                        {got.toFixed(0)} kg
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            target === 0
+                              ? "bg-slate-100 text-slate-600"
+                              : met
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {target === 0 ? "no target" : met ? "confirmed" : "pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Leaderboard */}
@@ -352,6 +677,63 @@ export default function SupervisorFields() {
           </>
         )}
       </div>
+
+      {confirmRemove && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="bg-[#14493B] px-6 py-4">
+              <h3 className="text-lg font-extrabold text-white">
+                Remove from map?
+              </h3>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm text-[#14493B]">
+                <span className="font-bold">{confirmRemove.label}</span> will no
+                longer be drawn on the map.
+              </p>
+              <p className="mt-2 text-xs text-[#14493B]/60">
+                The field itself is not deleted — its workers, yield, targets and
+                history are untouched. You can place it again at any time.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#13483B]/10 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setConfirmRemove(null)}
+                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-[#14493B]/60 hover:bg-[#D3FFAC]/50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => removeFromMap(confirmRemove)}
+                className="rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AssignFieldDialog
+        open={!!dropped}
+        position={dropped}
+        fields={fields}
+        onSaved={() => load().catch(() => {})}
+        onClose={() => {
+          setDropped(null);
+          setPlacing(false);
+        }}
+      />
+
+      <CreateScheduleModal
+        open={scheduleOpen}
+        fields={fields}
+        workers={workers}
+        onCreate={(s) => setSchedules((list) => [s, ...list])}
+        onClose={() => setScheduleOpen(false)}
+      />
 
       <HarvestingFieldsModal
         open={modalOpen}

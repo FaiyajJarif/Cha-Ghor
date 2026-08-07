@@ -79,8 +79,8 @@ export default function LoanScoreCard({ loan, onClose }) {
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[90] bg-black/40" onClick={onClose} />
-      <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-[1210] flex items-center justify-center p-4">
         <div
           className="flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}

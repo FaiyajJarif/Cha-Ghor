@@ -122,12 +122,12 @@ export default function AttendanceDrawer({
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[90] bg-black/40"
+        className="fixed inset-0 z-[1200] bg-black/40"
         onClick={onClose}
         aria-hidden
       />
       <aside
-        className="fixed inset-y-0 right-0 z-[95] flex w-full max-w-3xl flex-col bg-white shadow-2xl"
+        className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-3xl flex-col bg-white shadow-2xl"
         role="dialog"
         aria-label="Daily attendance register"
       >

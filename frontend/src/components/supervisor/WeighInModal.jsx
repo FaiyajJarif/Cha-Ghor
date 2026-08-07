@@ -118,8 +118,8 @@ export default function WeighInModal({ open, date, workers, zones, onSaved, onCl
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[90] bg-black/40" onClick={onClose} aria-hidden />
-      <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
+      <div className="fixed inset-0 z-[1210] flex items-center justify-center p-4">
         <div
           className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
           onClick={(e) => e.stopPropagation()}

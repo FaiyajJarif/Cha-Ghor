@@ -246,7 +246,7 @@ function ShipmentFormModal({ mode, initial, busy, error, onCancel, onSubmit }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const isEdit = mode === "edit";
   return createPortal(
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl">
         <ModalHeader
           title={isEdit ? "Edit shipment" : "Dispatch a new shipment"}
@@ -333,7 +333,7 @@ function WarehouseModal({ initial, busy, error, onCancel, onSubmit }) {
   useEffect(() => setForm(initial), [initial]);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   return createPortal(
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
         <ModalHeader
           title="Edit warehouse location"
@@ -430,7 +430,7 @@ function ConfirmModal({
   onConfirm,
 }) {
   return createPortal(
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
         <ModalHeader title={title} onClose={onCancel} />
         <div className="space-y-3 p-6">
@@ -477,7 +477,7 @@ function Toast({ message, onClose }) {
   }, [message]);
   if (!message) return null;
   return createPortal(
-    <div className="fixed bottom-6 left-1/2 z-[1100] -translate-x-1/2">
+    <div className="fixed bottom-6 left-1/2 z-[1210] -translate-x-1/2">
       <div className="flex items-center gap-2 rounded-full bg-cg-dark px-4 py-2 text-sm font-semibold text-white shadow-lg">
         <LuCheckCheck size={16} className="text-cg-lime" />
         {message}

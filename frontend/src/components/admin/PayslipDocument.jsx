@@ -258,9 +258,9 @@ export default function PayslipDocument({ rows, config, onClose }) {
     <>
       <style>{PRINT_CSS}</style>
 
-      <div className="no-print fixed inset-0 z-[90] bg-black/40" onClick={onClose} />
+      <div className="no-print fixed inset-0 z-[1200] bg-black/40" onClick={onClose} />
 
-      <div className="no-print fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="no-print fixed inset-0 z-[1210] flex items-center justify-center p-4">
         <div
           className="flex max-h-[92vh] w-full max-w-[820px] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
