@@ -1,6 +1,9 @@
 package com.chaghor.chaghor.leaf;
 
 import com.chaghor.chaghor.leaf.dto.LeafHealthReport;
+import com.chaghor.chaghor.leaf.dto.LeafHealthReportResult;
+import com.chaghor.chaghor.fieldcase.FieldCaseService;
+import com.chaghor.chaghor.fieldcase.dto.CreateCaseRequest;
 import com.chaghor.chaghor.fieldcase.CaseAttachmentService;
 import com.chaghor.chaghor.vision.VisionInference;
 import com.chaghor.chaghor.vision.VisionInferenceRepository;
@@ -46,6 +49,10 @@ public class LeafHealthService {
 
     private final VisionInferenceRepository visionRepo;
     private final CaseAttachmentService attachments;
+    // Raising a case is what makes this useful: a supervisor who spots a
+    // problem in a field needs it to reach the office, not sit in a panel they
+    // will close in ten seconds.
+    private final FieldCaseService cases;
     private final ObjectMapper mapper = new ObjectMapper();
     // HTTP/1.1 required -- uvicorn cannot do the h2c upgrade Java's default
     // HTTP/2 client attaches, and the body arrives mangled as a 422.
@@ -57,9 +64,11 @@ public class LeafHealthService {
 
     public LeafHealthService(VisionInferenceRepository visionRepo,
                              CaseAttachmentService attachments,
+                             FieldCaseService cases,
                              @Value("${app.ai.service.url:http://127.0.0.1:8000}") String aiBaseUrl) {
         this.visionRepo = visionRepo;
         this.attachments = attachments;
+        this.cases = cases;
         this.aiBaseUrl = aiBaseUrl.replaceAll("/+$", "");
     }
 
@@ -181,5 +190,84 @@ public class LeafHealthService {
             return "No vision model is available. This needs Gemini — check the key in ai_service/.env.";
         }
         return "Leaf health assessment is unavailable (" + m + ").";
+    }
+
+    // ---- examine, then tell the admin ---------------------------------------
+
+    // Photograph a problem in the field, get a diagnosis, and file it as a case
+    // in one action.
+    //
+    // The case goes through the SAME FieldCase module as everything else, so it
+    // lands in admin Reports & Complaints beside every other issue rather than
+    // in a leaf-only inbox nobody checks. The photo is attached as evidence.
+    //
+    // PRIORITY IS DERIVED FROM SEVERITY, NOT CHOSEN BY THE MODEL: a SEVERE
+    // reading raises a HIGH case, MODERATE a MEDIUM one. Anything healthier is
+    // still filed if the supervisor asked for it, at LOW -- because a person
+    // who thought it was worth reporting may be seeing something the model did
+    // not.
+    @Transactional
+    public LeafHealthReportResult assessAndReport(MultipartFile file, String zone,
+                                                  String note, Long userId,
+                                                  String userName, String role) {
+        LeafHealthReport a = assess(file, zone == null ? null : "zone:" + zone);
+
+        // A photo that could not be judged still gets filed. The supervisor saw
+        // something; the model failing to name it does not make the field fine.
+        String severity = a.healthBand() == null ? "UNKNOWN" : a.healthBand();
+        String priority = switch (severity) {
+            case "SEVERE" -> "HIGH";
+            case "MODERATE" -> "MEDIUM";
+            default -> "LOW";
+        };
+
+        StringBuilder body = new StringBuilder();
+        if (note != null && !note.isBlank()) {
+            body.append(note.trim()).append("\n\n");
+        }
+        body.append("Reported from the leaf collection screen.\n");
+        if (a.healthScore() != null) {
+            body.append("Leaf condition score: ").append(a.healthScore())
+                    .append("/100 (").append(severity.toLowerCase()).append(").\n");
+        }
+        if (!a.candidates().isEmpty()) {
+            body.append("\nMost likely causes, as read from the photo:\n");
+            for (LeafHealthReport.Candidate c : a.candidates()) {
+                body.append("  - ").append(c.condition())
+                        .append(" (").append(Math.round((c.likelihood() == null ? 0 : c.likelihood()) * 100))
+                        .append("%)");
+                if (c.why() != null && !c.why().isBlank()) {
+                    body.append(" — ").append(c.why());
+                }
+                body.append("\n");
+            }
+        }
+        if (!a.observations().isEmpty()) {
+            body.append("\nWhat the photo shows:\n");
+            a.observations().forEach(o -> body.append("  - ").append(o).append("\n"));
+        }
+        // Said plainly in the case body, because an admin reading this later
+        // has no other way to know how much weight to put on it.
+        body.append("\nThis is an AI reading of one photograph, not a diagnosis. ")
+                .append("No treatment or chemical is recommended — have the field inspected.");
+
+        String title = a.candidates().isEmpty()
+                ? "Leaf problem reported" + (zone == null ? "" : " in " + zone)
+                : "Possible " + a.candidates().get(0).condition()
+                        + (zone == null ? "" : " in " + zone);
+
+        try {
+            var created = cases.create(new CreateCaseRequest(
+                    "REPORT", "Field condition", title, body.toString(),
+                    null, zone, priority, a.imageUrl()), userId, userName, role);
+            return new LeafHealthReportResult(a, created.id(), created.title(), null);
+        } catch (Exception e) {
+            log.warn("Leaf health report could not be filed: {}", e.toString());
+            // The examination succeeded. Say the filing did not, rather than
+            // letting the supervisor believe the office has been told.
+            return new LeafHealthReportResult(a, null, null,
+                    "The leaf was examined but the report could not be filed. "
+                            + "Raise it from Broadcast instead.");
+        }
     }
 }

@@ -20,6 +20,9 @@ import java.time.LocalDate;
 import com.chaghor.chaghor.vision.VisionInference;
 import com.chaghor.chaghor.vision.dto.VisionReviewRequest;
 import java.util.Map;
+import com.chaghor.chaghor.leaf.dto.LeafHealthReportResult;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import com.chaghor.chaghor.security.AppUserDetails;
 import java.util.List;
 
 @RestController
@@ -147,5 +150,37 @@ public class LeafCollectionController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public Map<String, Object> visionAccuracy() {
         return visionReview.accuracy();
+    }
+
+    // Photograph a problem in a field and file it with the office in one action.
+    //
+    // Lands in admin Reports & Complaints through the normal FieldCase module,
+    // with the photo attached as evidence and the priority derived from how bad
+    // the reading was. The supervisor identity comes from the JWT.
+    @PostMapping("/health-report")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public LeafHealthReportResult healthReport(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(required = false) String zone,
+            @RequestParam(required = false) String note,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        return health.assessAndReport(file, zone, note,
+                userId(principal), userName(principal), userRole(principal));
+    }
+
+    // Same shape as FieldCaseController's helpers. AppUserDetails exposes
+    // getUser(), not id/name/role directly.
+    private static Long userId(AppUserDetails p) {
+        return p == null ? null : p.getUser().getId();
+    }
+
+    private static String userName(AppUserDetails p) {
+        if (p == null) return "";
+        String dn = p.getUser().getDisplayName();
+        return (dn == null || dn.isBlank()) ? p.getUser().getUsername() : dn;
+    }
+
+    private static String userRole(AppUserDetails p) {
+        return p == null ? "" : p.getUser().getRole().name();
     }
 }

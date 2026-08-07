@@ -18,6 +18,7 @@ import { apiError } from "../../lib/apiError";
 import { queueOrSend } from "../../lib/outbox";
 import { newUuid } from "../../lib/uuid";
 import ZonePicker from "./ZonePicker";
+import ReportLeafProblemModal from "./ReportLeafProblemModal";
 
 // Weigh-in board — the whole day's scale work on one sliding panel.
 //
@@ -125,6 +126,8 @@ export default function LeafWeighInDrawer({
       ["localhost", "127.0.0.1"].includes(window.location?.hostname));
   const [photoFor, setPhotoFor] = useState(null);
   const [gradingId, setGradingId] = useState(null);
+  // Spotted something wrong while weighing? Report it without leaving the queue.
+  const [reportOpen, setReportOpen] = useState(false);
 
   // Photograph the bulk this worker handed in.
   //
@@ -296,6 +299,11 @@ export default function LeafWeighInDrawer({
         onChange={takePhoto}
         className="hidden"
       />
+      <ReportLeafProblemModal
+        open={reportOpen}
+        zones={zones}
+        onClose={() => setReportOpen(false)}
+      />
       <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
       <aside
         className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-3xl flex-col bg-white shadow-2xl"
@@ -323,6 +331,14 @@ export default function LeafWeighInDrawer({
               className="inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#14493B] transition hover:bg-white/90 disabled:opacity-50"
             >
               <LuScale size={15} /> {saving ? "Saving…" : "Save weigh-ins"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setReportOpen(true)}
+              title="Photograph a problem in the field and tell the office"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white/20 px-3 py-2 text-sm font-bold text-white transition hover:bg-white/30"
+            >
+              <LuTriangleAlert size={15} /> Report a problem
             </button>
             <button
               type="button"

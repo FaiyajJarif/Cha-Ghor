@@ -36,6 +36,7 @@ import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
 import LeafAiPanel from "../../components/supervisor/LeafAiPanel";
 import LeafEntryDialog from "../../components/supervisor/LeafEntryDialog";
 import LeafPhotoThumb from "../../components/supervisor/LeafPhotoThumb";
+import ReportLeafProblemModal from "../../components/supervisor/ReportLeafProblemModal";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 
@@ -158,6 +159,7 @@ export default function SupervisorLeaf() {
   const ENTRY_PAGE = 6;
   const [entryPage, setEntryPage] = useState(0);
   const [live, setLive] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   // Map editing, same as the Fields board: drop a pin, move it, take it off.
   // A field with no position is not drawn at all, so without this the leaf map
   // could never gain a marker.
@@ -550,6 +552,14 @@ export default function SupervisorLeaf() {
           </button>
           {/* The board is the normal way to work a scale queue; the single
               modal stays for correcting one person afterwards. */}
+          <button
+            type="button"
+            onClick={() => setReportOpen(true)}
+            title="Photograph a problem in a field and tell the office"
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 transition hover:bg-amber-100"
+          >
+            <LuTriangleAlert size={15} /> Report a problem
+          </button>
           <button type="button" className={BTN_DARK} onClick={() => setBoardOpen(true)}>
             <LuScale size={15} /> Weigh-in board
           </button>
@@ -1137,6 +1147,13 @@ export default function SupervisorLeaf() {
           </div>
         </div>
       )}
+
+      <ReportLeafProblemModal
+        open={reportOpen}
+        zones={zonesMeta}
+        onClose={() => setReportOpen(false)}
+        onFiled={() => load().catch(() => {})}
+      />
 
       <LeafEntryDialog
         open={!!entryDialog}
