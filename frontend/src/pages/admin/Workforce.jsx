@@ -20,6 +20,7 @@ import {
   LuSparkles,
   LuUpload,
   LuLeaf,
+  LuMap,
 } from "react-icons/lu";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
@@ -27,6 +28,7 @@ import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
 import LeafReviewDrawer from "../../components/admin/LeafReviewDrawer";
+import FieldManagerModal from "../../components/supervisor/FieldManagerModal";
 import { WORKER_LEADERBOARD } from "../../lib/adminSample";
 import ChaBot from "../../components/admin/ChaBot";
 
@@ -379,6 +381,10 @@ export default function Workforce() {
   const [monthFor, setMonthFor] = useState(null);
   // Admin review of the weigh-ins the payroll surplus is built from.
   const [leafOpen, setLeafOpen] = useState(false);
+  // Field targets, names and retirement. Admin-only on the server, so this is
+  // where it belongs — it was reachable only from the supervisor console,
+  // which 403'd on every action.
+  const [fieldsOpen, setFieldsOpen] = useState(false);
 
   useEffect(() => {
     let retry;
@@ -629,6 +635,14 @@ export default function Workforce() {
               title="Review the weigh-ins that feed the payroll surplus"
             >
               <LuLeaf size={16} /> Leaf collection
+            </button>
+            <button
+              type="button"
+              onClick={() => setFieldsOpen(true)}
+              className={BTN_GHOST}
+              title="Add, rename or retire fields, and set each field's daily target"
+            >
+              <LuMap size={16} /> Fields & targets
             </button>
             <button onClick={openCreate} className={BTN_DARK}>
               <LuUserPlus size={16} /> Add worker
@@ -1309,6 +1323,12 @@ export default function Workforce() {
           </div>,
           document.body,
         )}
+
+      <FieldManagerModal
+        open={fieldsOpen}
+        onClose={() => setFieldsOpen(false)}
+        onChanged={load}
+      />
 
       <LeafReviewDrawer open={leafOpen} onClose={() => setLeafOpen(false)} />
 

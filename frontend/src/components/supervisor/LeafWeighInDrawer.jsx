@@ -135,9 +135,18 @@ export default function LeafWeighInDrawer({
   //   1. EVIDENCE — a picture of the bulk on the scale, kept against the row,
   //      so a disputed weigh-in can be looked at rather than argued about.
   //   2. A GRADE SUGGESTION, which is a convenience on top. The supervisor
-  //      still taps A or B; the suggestion only pre-selects it.
+  //      taps A, B or C themselves. The suggestion is DISPLAYED, never applied.
   // The photo is stored even when the grader is unavailable, because the
   // evidence is worth more than the opinion.
+  //
+  // WHY THE SUGGESTION IS NOT PRE-SELECTED (measured, not assumed):
+  // eval_leaf_grade.py over 97 labelled photographs from the Sylhet
+  // TeaLeafAgeQuality set — the model answered A on 91% of them when only 51%
+  // were A. Recall on grade B was 14.6%. Overall 56.7% against a 51%
+  // always-guess-A baseline, p = 0.15, i.e. indistinguishable from guessing.
+  // Grade-A kilos pay a ৳1/kg bonus, so pre-filling a grade this biased and
+  // letting a supervisor confirm it by reflex would put money on the payroll
+  // that the leaf did not earn. It suggests; the person decides.
   const takePhoto = async (e) => {
     const file = e.target.files?.[0];
     const workerId = photoFor;
@@ -158,10 +167,10 @@ export default function LeafWeighInDrawer({
       set(workerId, {
         photoId: data.visionId ?? null,
         suggested: data.grade ?? null,
-        suggestedConf: data.confidence ?? null,
-        // Pre-select ONLY as a suggestion, and only when the row has no grade
-        // yet — never overwrite something the supervisor already chose.
-        ...(data.grade && !draft[workerId]?.grade ? { grade: data.grade } : {}),
+        // Confidence is deliberately NOT kept. Measured at 0.96 when the model
+        // was right and 0.96 when it was wrong — it carries no information, and
+        // showing a percentage would lend the guess an authority it has not
+        // earned.
       });
     } catch (err) {
       setError(apiError(err, "Could not attach that photo."));
@@ -524,22 +533,44 @@ export default function LeafWeighInDrawer({
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex gap-1">
-                              {GRADES.map((g) => (
-                                <button
-                                  key={g.value}
-                                  type="button"
-                                  title={g.hint}
-                                  onClick={() => set(w.id, { grade: g.value })}
-                                  className={`h-8 w-8 rounded-lg text-xs font-bold transition ${
-                                    d.grade === g.value
-                                      ? "bg-cg-dark text-white"
-                                      : "bg-cg-lime/50 text-cg-ink hover:bg-cg-lime"
-                                  }`}
-                                >
-                                  {g.label}
-                                </button>
-                              ))}
+                              {GRADES.map((g) => {
+                                // The model's guess is shown as a dotted outline
+                                // on the button, never as a selection. Nothing is
+                                // recorded until the supervisor taps.
+                                const hinted =
+                                  d.suggested === g.value && d.grade !== g.value;
+                                return (
+                                  <button
+                                    key={g.value}
+                                    type="button"
+                                    title={
+                                      hinted
+                                        ? `${g.hint} — the photo suggests this. Often wrong; check the leaf.`
+                                        : g.hint
+                                    }
+                                    onClick={() => set(w.id, { grade: g.value })}
+                                    className={`h-8 w-8 rounded-lg text-xs font-bold transition ${
+                                      d.grade === g.value
+                                        ? "bg-cg-dark text-white"
+                                        : hinted
+                                          ? // A ring, not a fill. Tailwind rings
+                                            // cannot be dashed, so the weaker
+                                            // signal is opacity: clearly marked,
+                                            // clearly not the chosen one.
+                                            "bg-cg-lime/50 text-cg-ink ring-2 ring-cg-dark/40 hover:bg-cg-lime"
+                                          : "bg-cg-lime/50 text-cg-ink hover:bg-cg-lime"
+                                    }`}
+                                  >
+                                    {g.label}
+                                  </button>
+                                );
+                              })}
                             </div>
+                            {d.suggested && !d.grade && (
+                              <p className="mt-1 text-[10px] leading-tight text-cg-ink/45">
+                                photo suggests {d.suggested} — you decide
+                              </p>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             {d.photoPreview ? (

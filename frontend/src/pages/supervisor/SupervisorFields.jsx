@@ -12,6 +12,7 @@ import {
   LuSettings,
 } from "react-icons/lu";
 import api from "../../api/client";
+import { useAuth } from "../../context/AuthContext";
 import { apiError } from "../../lib/apiError";
 import { BTN_DARK } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
@@ -94,6 +95,12 @@ export default function SupervisorFields() {
   const [confirmRemove, setConfirmRemove] = useState(null);
   // Add / rename / retire the estate's fields. Admin-only on the server.
   const [manageOpen, setManageOpen] = useState(false);
+  // Field CRUD is @PreAuthorize("hasRole('ADMIN')") on the server. Showing a
+  // supervisor a button that 403s is worse than not showing it — the daily
+  // TARGET in particular is the number their own performance is measured
+  // against, so it is deliberately not theirs to change.
+  const { user } = useAuth();
+  const canManageFields = String(user?.role || "").toLowerCase() === "admin";
 
   const load = useCallback(async () => {
     const [f, w] = await Promise.all([
@@ -311,8 +318,14 @@ export default function SupervisorFields() {
                 different people at two different times. */}
             <button
               type="button"
-              onClick={() => setManageOpen(true)}
-              className="rounded-xl bg-[#14493B] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110"
+              onClick={() => canManageFields && setManageOpen(true)}
+              disabled={!canManageFields}
+              title={
+                canManageFields
+                  ? "Add, rename or retire fields, and set daily targets"
+                  : "Only an admin can change fields or targets. Ask the office — the daily target is what your field's performance is measured against."
+              }
+              className="rounded-xl bg-[#14493B] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <LuSettings size={14} className="mr-1 inline" />
               Manage fields

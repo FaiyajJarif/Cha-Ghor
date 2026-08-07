@@ -117,6 +117,22 @@ def main():
         b = [i for i in items if i[1] == "B"][: limit // 2]
         items = a + b
 
+    # Fail fast if the service is not there. Printing 100 identical
+    # "Connection refused" lines and then a table of zeroes wastes the run and
+    # buries the one fact that matters: uvicorn is not running.
+    health = API.rsplit("/", 1)[0] + "/health"
+    try:
+        urllib.request.urlopen(health, timeout=5).read()
+    except Exception as e:  # noqa: BLE001
+        print(f"The AI service is not answering at {API}\n")
+        print(f"  {type(e).__name__}: {e}\n")
+        print("Start it in a SEPARATE terminal and leave it running:")
+        print("    cd ai_service && source .venv/bin/activate")
+        print("    uvicorn main:app --port 8000")
+        print("\nThen run this again in your first terminal. Do not Ctrl+C the")
+        print("server first -- the eval calls it once per image.")
+        sys.exit(1)
+
     print(f"Grading {len(items)} images through {API}\n")
 
     # confusion[true][predicted], plus an explicit "refused" column, because
@@ -127,12 +143,25 @@ def main():
     errors = 0
     started = time.time()
 
+    consecutive_errors = 0
     for i, (path, truth) in enumerate(items, 1):
         pred, conf, err = grade_one(path)
         if err:
             errors += 1
+            consecutive_errors += 1
+            # Five in a row means the service went away, not that five photos
+            # were bad. Stop and say so while the partial result is still
+            # worth reading.
+            if consecutive_errors >= 5:
+                print(f"\n  Stopped after {consecutive_errors} consecutive failures "
+                      f"at image {i}.")
+                print(f"  Last error: {err}")
+                print("  The service is probably not running. Results below cover "
+                      "only what was graded before it stopped.\n")
+                break
             print(f"  [{i}/{len(items)}] {os.path.basename(path):<28} ERROR {err}")
             continue
+        consecutive_errors = 0
         key = pred if pred in CLASSES else "refused"
         confusion[truth][key] += 1
         if pred in CLASSES:

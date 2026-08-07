@@ -368,17 +368,28 @@ export default function LeafAiPanel({ onGraded }) {
                     ? `Suggests grade ${suggestion.grade}`
                     : "Not a plucked bulk — nothing to grade"}
                 </p>
-                {/* The percentage belongs to a GRADE. Printing "95% confident"
-                    beside "could not grade" asks the reader to be confident of
-                    nothing. When there is no grade, the number describes how
-                    sure it is the photo is ungradable, and says so. */}
-                {conf != null && (
+                {/* THE CONFIDENCE NUMBER IS NOT SHOWN FOR A GRADE, and that is
+                    a measured decision, not caution. Over 97 labelled Sylhet
+                    photographs the model reported a mean confidence of 0.96
+                    when it was right and 0.96 when it was wrong. It carries no
+                    information about correctness, so printing it would only
+                    make a coin-flip look authoritative.
+
+                    It is still shown for a REFUSAL, where it means something
+                    different and cheaper to verify: how sure it is that the
+                    frame is not pluckable leaf on a scale. */}
+                {suggestion.grade ? (
                   <p className="text-xs text-cg-ink/60">
-                    {suggestion.grade
-                      ? `${Math.round(conf * 100)}% confident in that grade`
-                      : `${Math.round(conf * 100)}% sure this is not pluckable leaf on a scale`}
+                    A guess from one photograph — check the leaf
                     {suggestion.provider ? ` · ${suggestion.provider}` : ""}
                   </p>
+                ) : (
+                  conf != null && (
+                    <p className="text-xs text-cg-ink/60">
+                      {Math.round(conf * 100)}% sure this is not pluckable leaf on a scale
+                      {suggestion.provider ? ` · ${suggestion.provider}` : ""}
+                    </p>
+                  )
                 )}
               </div>
             </div>
