@@ -38,6 +38,11 @@ ROUTES = {
     # Health assessment is also vision-only, same reasoning as leaf_grade.
     "leaf_health": os.getenv("ROUTE_LEAF_HEALTH", "gemini"),
     "report": os.getenv("ROUTE_REPORT", "gemini"),
+    # Pluck advice is a few sentences over a small table -- no vision, no SQL,
+    # nothing that needs a frontier model. Defaults to the local model so the
+    # Fields board never spends the Gemini free-tier quota that the leaf photo
+    # work actually needs.
+    "pluck_advice": os.getenv("ROUTE_PLUCK_ADVICE", "ollama"),
     # anomaly detection reads real payroll / loan rows, so it defaults to the
     # LOCAL model for the same reason "answer" does -- row-level money data
     # should not leave the machine unless the operator opts in.

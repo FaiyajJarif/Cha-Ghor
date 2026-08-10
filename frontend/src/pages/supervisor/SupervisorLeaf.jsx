@@ -201,9 +201,13 @@ export default function SupervisorLeaf() {
         } catch {
           return;
         }
-        // Only leaf frames. Refetching on every notification would hammer the
-        // API for nothing.
-        if (kind === "leaf.saved" && loadRef.current) {
+        // Leaf frames, plus zone frames: this page loads /zones for the field
+        // picker and the heatmap, so a field renamed or retired elsewhere would
+        // otherwise leave a stale name in the weigh-in dropdown — and a
+        // weigh-in filed against a field that no longer exists is a real
+        // attribution error, not a cosmetic one. Refetching on every
+        // notification would hammer the API for nothing.
+        if ((kind === "leaf.saved" || kind === "zone.saved") && loadRef.current) {
           loadRef.current().catch(() => {});
         }
       };

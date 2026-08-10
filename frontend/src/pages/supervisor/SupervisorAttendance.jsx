@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LuUsers,
   LuCircleCheck,
@@ -11,11 +11,14 @@ import {
   LuSave,
   LuDownload,
   LuPrinter,
+  LuTriangleAlert,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { queueOrSend, count as outboxCount, flush as outboxFlush } from "../../lib/outbox";
 import { newUuid } from "../../lib/uuid";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import AttendanceDrawer from "../../components/supervisor/AttendanceDrawer";
@@ -121,8 +124,25 @@ export default function SupervisorAttendance() {
   const [pending, setPending] = useState(0);
   // Which worker's month is open. Null = closed.
   const [monthFor, setMonthFor] = useState(null);
+  const [live, setLive] = useState(false);
+  // Someone else changed this register while marks were in progress here.
+  // Never resolved automatically — see the socket handler below.
+  const [remoteChanged, setRemoteChanged] = useState(false);
 
-  const load = useCallback(async () => {
+  // The draft exactly as the server last gave it to us. Comparing the live
+  // draft against this is how we know whether the supervisor has unsaved marks,
+  // which decides whether a background refresh is allowed to touch the table.
+  const serverDraftRef = useRef({});
+
+  // `keepDraft` is the whole reason this function takes an argument.
+  //
+  // THE TABLE IS AN UNSAVED DRAFT until "Save Attendance Data" is pressed. A
+  // refetch calls setDraft() and replaces it wholesale, so refreshing on a
+  // socket frame while a supervisor is halfway through a register of 60 workers
+  // would silently wipe every mark they had made and not yet saved. That is the
+  // single worst thing this page could do, so a background refresh takes the
+  // read-only parts and leaves the register alone.
+  const load = useCallback(async (keepDraft = false) => {
     const [w, m, a, s, t] = await Promise.all([
       api.get("/workers"),
       api.get("/workers/meta"),
@@ -147,7 +167,9 @@ export default function SupervisorAttendance() {
         lateMinutes: row.lateMinutes ?? null,
       };
     }
-    setDraft(next);
+    serverDraftRef.current = next;
+    if (!keepDraft) setDraft(next);
+    return next;
   }, [date]);
 
   useEffect(() => {
@@ -182,7 +204,9 @@ export default function SupervisorAttendance() {
     const onOnline = () => {
       outboxFlush()
         .then(refresh)
-        .then(() => alive && load().catch(() => {}))
+        // Same guard as the socket path: a flush that lands while the
+        // supervisor is mid-register must not replace the table under them.
+        .then(() => alive && load(isDirtyRef.current).catch(() => {}))
         .catch(() => {});
     };
     window.addEventListener("online", onOnline);
@@ -193,6 +217,93 @@ export default function SupervisorAttendance() {
       clearInterval(timer);
     };
   }, [load]);
+
+  // Does the supervisor have marks that are not on the server yet?
+  //
+  // Compared against the last server copy rather than tracked with a flag,
+  // because a flag would have to be cleared in every one of the several places
+  // that write to the draft, and missing one would mean either losing work or
+  // nagging about a conflict that does not exist.
+  const isDirty = useMemo(() => {
+    const a = serverDraftRef.current || {};
+    const keys = new Set([...Object.keys(a), ...Object.keys(draft)]);
+    for (const k of keys) {
+      const x = a[k];
+      const y = draft[k];
+      if (!x || !y) return true;
+      if (x.status !== y.status) return true;
+      if ((x.zoneId ?? null) !== (y.zoneId ?? null)) return true;
+      if ((x.lateMinutes ?? null) !== (y.lateMinutes ?? null)) return true;
+    }
+    return false;
+  }, [draft]);
+
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
+  // Live updates.
+  //
+  // This page had no socket at all, which meant a register amended from the
+  // admin console, or a field renamed while this screen sat open, simply did
+  // not show until someone reloaded.
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onopen = () => setLive(true);
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        if (kind !== "attendance.saved" && kind !== "zone.saved") return;
+        if (!loadRef.current) return;
+
+        // Refresh the summary, the trend and the field list either way — none
+        // of those can destroy work in progress. The REGISTER is only re-seeded
+        // when there is nothing unsaved to lose; otherwise the supervisor is
+        // told and decides for themselves.
+        const keepDraft = isDirtyRef.current;
+        loadRef.current(keepDraft)
+          .then(() => {
+            if (keepDraft) setRemoteChanged(true);
+          })
+          .catch(() => {});
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        setLive(false);
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
 
   const activeWorkers = useMemo(
     () => workers.filter((w) => String(w.status).toLowerCase() === "active"),
@@ -394,9 +505,28 @@ export default function SupervisorAttendance() {
             Mark the register for a day, assign fields, then save.
           </p>
         </div>
-        <button type="button" className={BTN_GHOST} onClick={() => setDrawerOpen(true)}>
-          <LuLayoutList size={15} /> View all
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            title={
+              live
+                ? "Connected. Changes made elsewhere appear here. Marks you have not saved are never overwritten."
+                : "Not connected. The register is correct but will not update on its own."
+            }
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+              live ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                live ? "animate-pulse bg-emerald-500" : "bg-slate-400"
+              }`}
+            />
+            {live ? "Live" : "Offline"}
+          </span>
+          <button type="button" className={BTN_GHOST} onClick={() => setDrawerOpen(true)}>
+            <LuLayoutList size={15} /> View all
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -407,6 +537,38 @@ export default function SupervisorAttendance() {
       {notice && (
         <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800 ring-1 ring-emerald-200">
           {notice}
+        </div>
+      )}
+
+      {/* Someone else changed this register while marks are in progress here.
+          NEVER resolved automatically: replacing the table would throw away
+          work that is on screen and not yet saved, and quietly keeping the
+          local copy would hide the fact that the server has moved on. So it
+          says what happened and offers both ways out. */}
+      {remoteChanged && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+          <LuTriangleAlert size={15} className="shrink-0" />
+          This register was changed somewhere else while you were marking. Your
+          marks on screen are untouched.
+          <button
+            type="button"
+            onClick={() => {
+              load(false)
+                .then(() => setRemoteChanged(false))
+                .catch(() => {});
+            }}
+            className="ml-auto rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-amber-900 ring-1 ring-amber-300"
+          >
+            Load their version
+          </button>
+          <button
+            type="button"
+            onClick={() => setRemoteChanged(false)}
+            title="Your marks win when you press Save."
+            className="rounded-lg px-2 py-1 text-xs font-bold text-amber-900/70"
+          >
+            Keep mine
+          </button>
         </div>
       )}
 

@@ -32,5 +32,18 @@ public record FieldResponse(
         long workersPresent,
         BigDecimal yieldKg,
         long weighIns,
-        Integer efficiencyPct) {
+        Integer efficiencyPct,
+
+        // A SUGGESTED ground condition and why, or null when there is nothing
+        // worth saying. Computed in ZoneService.suggestCondition from this
+        // field's yield against its own 14-day average, softened by recent
+        // rainfall.
+        //
+        // Never written anywhere. `condition` above is what the supervisor
+        // actually recorded; this is a question put to them. V23's reasoning
+        // still holds -- what a field looks like is something a person sees
+        // standing in it -- so the most this can honestly do is point at a
+        // field worth walking.
+        String suggestedCondition,
+        String conditionReason) {
 }

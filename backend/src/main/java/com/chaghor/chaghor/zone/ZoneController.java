@@ -70,17 +70,29 @@ public class ZoneController {
 
     // ---- field management ---------------------------------------------------
     //
-    // Admin only. Adding or retiring a field changes what every supervisor sees
-    // on their map and in every zone picker, so it is not a field-side action.
+    // SUPERVISORS CAN DO THIS TOO, with one exception.
+    //
+    // This was admin-only. The reasoning was that adding or retiring a field
+    // changes what every supervisor sees, so it belonged with the office -- but
+    // in practice the person who knows a block has been opened for plucking or
+    // closed for pruning is the one walking it. Routing that through admin did
+    // not make the estate safer, it made the map wrong until someone got round
+    // to fixing it, and left a disabled button on the supervisor's own Fields
+    // page.
+    //
+    // THE EXCEPTION IS target_kg_per_day, enforced in ZoneService.guardTarget:
+    // it is the number a supervisor's field is judged against on the
+    // leaderboard, and editing the bar you are measured by is a different kind
+    // of permission from saying which fields exist.
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ZoneResponse create(@Valid @RequestBody ZoneUpsertRequest req) {
         return service.create(req);
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ZoneResponse update(@PathVariable Long id, @Valid @RequestBody ZoneUpsertRequest req) {
         return service.update(id, req);
     }
@@ -88,19 +100,21 @@ public class ZoneController {
     // Retires the field. Deliberately NOT a destructive delete -- see
     // ZoneService.archive for why the history would not survive one.
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ZoneResponse archive(@PathVariable Long id) {
         return service.archive(id);
     }
 
     @PostMapping("/{id}/restore")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ZoneResponse restore(@PathVariable Long id) {
         return service.restore(id);
     }
 
+    // Needed by whoever can restore, or Restore is an action with nothing to
+    // act on.
     @GetMapping("/archived")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public List<ZoneResponse> archived() {
         return service.archived();
     }

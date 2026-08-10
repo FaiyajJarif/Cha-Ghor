@@ -11,6 +11,7 @@ import {
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import { queueOrSend } from "../../lib/outbox";
 
 // Add, rename and retire fields.
 //
@@ -28,7 +29,14 @@ const FIELD =
 
 const EMPTY = { id: null, name: "", code: "", areaHectare: "", targetKgPerDay: "" };
 
-export default function FieldManagerModal({ open, onClose, onChanged }) {
+// canSetTarget defaults to false so a caller that forgets to pass it shows the
+// SAFER thing (a read-only target) rather than an input that 403s on save.
+export default function FieldManagerModal({
+  open,
+  onClose,
+  onChanged,
+  canSetTarget = false,
+}) {
   const [live, setLive] = useState([]);
   const [retired, setRetired] = useState([]);
   const [form, setForm] = useState(null);
@@ -75,9 +83,38 @@ export default function FieldManagerModal({ open, onClose, onChanged }) {
         targetKgPerDay: form.targetKgPerDay === "" ? null : Number(form.targetKgPerDay),
       };
       if (form.id) {
-        await api.put(`/zones/${form.id}`, body);
-        setNotice(`${body.name} updated.`);
+        // Renaming a field is idempotent — replaying it lands on the same
+        // name — so it can safely go through the offline outbox.
+        const { queued } = await queueOrSend({
+          path: `/zones/${form.id}`,
+          method: "PUT",
+          body,
+        });
+        setNotice(
+          queued
+            ? `${body.name} saved on this device. It will sync when you are back in signal.`
+            : `${body.name} updated.`,
+        );
+        if (queued) {
+          setForm(null);
+          return;
+        }
       } else {
+        // CREATING a field stays online-only, and that is deliberate.
+        //
+        // Every other write here is "last write wins" and can be replayed
+        // safely. A create cannot: without a client_uuid guard on `zones` a
+        // replay makes a SECOND field, and a duplicate field silently splits
+        // one block's attendance and yield across two rows, which nothing
+        // downstream would flag. Adding a new block is also a rare, deliberate
+        // act — unlike a weigh-in, it is not something you are forced to do
+        // standing in a dead spot.
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setError(
+            "Adding a new field needs a connection. Everything else here — renaming, retiring, restoring — works offline and syncs later.",
+          );
+          return;
+        }
         await api.post("/zones", body);
         setNotice(`${body.name} added. Place it on the map when you are ready.`);
       }
@@ -95,9 +132,18 @@ export default function FieldManagerModal({ open, onClose, onChanged }) {
     setBusy(true);
     setError("");
     try {
-      await api.delete(`/zones/${z.id}`);
-      setNotice(`${z.name} retired. Its history is kept and it can be restored.`);
-      await load();
+      // Retiring sets archived_at. Idempotent — retiring an already-retired
+      // field changes nothing — so it queues safely.
+      const { queued } = await queueOrSend({
+        path: `/zones/${z.id}`,
+        method: "DELETE",
+      });
+      setNotice(
+        queued
+          ? `${z.name} retired on this device. It will sync when you are back in signal.`
+          : `${z.name} retired. Its history is kept and it can be restored.`,
+      );
+      if (!queued) await load();
       onChanged?.();
     } catch (err) {
       setError(apiError(err, "Could not retire that field."));
@@ -111,9 +157,19 @@ export default function FieldManagerModal({ open, onClose, onChanged }) {
     setBusy(true);
     setError("");
     try {
-      await api.post(`/zones/${z.id}/restore`);
-      setNotice(`${z.name} is back in use.`);
-      await load();
+      // A POST, but idempotent by design: ZoneService.restore returns early if
+      // the field is already live. Safe to replay.
+      const { queued } = await queueOrSend({
+        path: `/zones/${z.id}/restore`,
+        method: "POST",
+        body: {},
+      });
+      setNotice(
+        queued
+          ? `${z.name} restored on this device. It will sync when you are back in signal.`
+          : `${z.name} is back in use.`,
+      );
+      if (!queued) await load();
       onChanged?.();
     } catch (err) {
       setError(apiError(err, "Could not restore that field."));
@@ -199,20 +255,40 @@ export default function FieldManagerModal({ open, onClose, onChanged }) {
                       className={`mt-1 ${FIELD}`}
                     />
                   </label>
-                  <label className="text-xs font-bold text-[#14493B]">
-                    Daily target (kg)
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.targetKgPerDay}
-                      onChange={(e) => setForm({ ...form, targetKgPerDay: e.target.value })}
-                      className={`mt-1 ${FIELD}`}
-                    />
-                  </label>
+                  {/* The target is the number this field's own performance is
+                      judged against on the leaderboard, so it is the one thing
+                      here a supervisor cannot set. The VALUE stays in form
+                      state and is sent back unchanged, which is what lets the
+                      server's guard see "nothing moved" rather than "they tried
+                      to clear it". */}
+                  {canSetTarget ? (
+                    <label className="text-xs font-bold text-[#14493B]">
+                      Daily target (kg)
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.targetKgPerDay}
+                        onChange={(e) =>
+                          setForm({ ...form, targetKgPerDay: e.target.value })
+                        }
+                        className={`mt-1 ${FIELD}`}
+                      />
+                    </label>
+                  ) : (
+                    <div className="text-xs font-bold text-[#14493B]">
+                      Daily target (kg)
+                      <p className="mt-1 rounded-xl bg-[#F4FFE9] px-4 py-2.5 text-sm font-normal text-[#14493B]/60 ring-1 ring-[#13483B]/10">
+                        {form.targetKgPerDay === "" || form.targetKgPerDay == null
+                          ? "Not set"
+                          : `${form.targetKgPerDay} kg/day`}
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <p className="mt-2 text-[11px] text-[#14493B]/50">
-                  Without a daily target the field shows no harvest-progress bar,
-                  because there is nothing to measure against.
+                  {canSetTarget
+                    ? "Without a daily target the field shows no harvest-progress bar, because there is nothing to measure against."
+                    : "Only the office can change the daily target — it is the figure your field's performance is measured against. Everything else here is yours to edit."}
                 </p>
                 <div className="mt-4 flex justify-end gap-2">
                   <button

@@ -1325,6 +1325,10 @@ export default function Workforce() {
         )}
 
       <FieldManagerModal
+        // This page is behind an admin route, and the daily target is an admin
+        // decision. The prop defaults to false so the supervisor's copy of this
+        // modal cannot show an input that would 403 on save.
+        canSetTarget
         open={fieldsOpen}
         onClose={() => setFieldsOpen(false)}
         onChanged={load}

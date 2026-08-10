@@ -53,6 +53,12 @@ class ReportRequest(BaseModel):
     period_label: Optional[str] = None
 
 
+class PluckAdviceRequest(BaseModel):
+    cycle_days: int = 8
+    weather_note: Optional[str] = None
+    fields: list = []
+
+
 class LeafGradeRequest(BaseModel):
     filename: Optional[str] = None
     content_type: Optional[str] = None
@@ -197,6 +203,66 @@ def report_endpoint(req: ReportRequest):
         raise HTTPException(status_code=502, detail="Model returned an empty report")
     return {"summary": summary, "provider": provider}
 
+
+
+# --- pluck round advice -------------------------------------------------------
+#
+# THE RANKING ARRIVES ALREADY DECIDED. Java computes days-since-last-pluck per
+# field against the estate's round and sorts the list; this endpoint is handed
+# the finished table and asked only to write it up for a supervisor.
+#
+# That split is deliberate. The photo grader was measured on 97 labelled Sylhet
+# photographs at 56.7% against a 51% always-guess baseline (p = 0.15) -- it
+# could not be shown to beat guessing. A model that cannot reliably read a leaf
+# should not be deciding which field gets picked tomorrow. Here it phrases
+# arithmetic anyone can check by hand, and if it is unavailable the caller drops
+# the paragraph and shows the table.
+_PLUCK_SYSTEM = """You write a short daily note for a tea estate supervisor in Sylhet, Bangladesh.
+
+You are given a list of fields that has ALREADY been ranked by someone else, most
+urgent first, using days since each field was last plucked against the estate's
+pluck round.
+
+RULES, all of them absolute:
+- Do NOT reorder the fields. The order you are given is the answer.
+- Do NOT invent a field, a number, a date or a kilo figure. Use only what is given.
+- Do NOT recommend any chemical, fertiliser, spray or dosage.
+- If a field's band is NO_DATA, say its round is unknown. Never describe it as overdue.
+- Never tell the supervisor what they must do. Describe what the numbers show and
+  let them decide -- they are standing in the field and you are not.
+
+Write 2-4 short sentences of plain English. No headings, no bullet points, no
+markdown. Name at most the three most urgent fields. If a weather note is
+supplied, work it in once. If nothing is overdue, say the round looks on track."""
+
+
+def _pluck_messages(req: "PluckAdviceRequest"):
+    payload = json.dumps({
+        "pluck_round_days": req.cycle_days,
+        "weather_note": req.weather_note,
+        "fields": req.fields,
+    }, default=str)[:6000]
+    return [
+        {"role": "system", "content": _PLUCK_SYSTEM},
+        {"role": "user", "content": f"RANKED FIELDS (JSON):\n{payload}"},
+    ]
+
+
+@app.post("/pluck-advice")
+def pluck_advice_endpoint(req: PluckAdviceRequest):
+    if not req.fields:
+        # No fields is not an error -- it is an empty estate, or every field is
+        # closed. Answering 400 would make the board show a failure for a
+        # perfectly ordinary state.
+        return {"summary": None, "provider": None}
+    try:
+        text, provider = complete("pluck_advice", _pluck_messages(req))
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
+    summary = (text or "").strip()
+    if not summary:
+        raise HTTPException(status_code=502, detail="Model returned an empty summary")
+    return {"summary": summary, "provider": provider}
 
 
 def _prep_leaf_image(data: bytes, content_type: str):

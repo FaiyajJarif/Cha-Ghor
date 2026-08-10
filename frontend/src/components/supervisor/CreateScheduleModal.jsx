@@ -10,37 +10,73 @@ import {
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import { queueOrSend } from "../../lib/outbox";
+import { newUuid } from "../../lib/uuid";
 
 // Create Schedule — planning a harvest or a maintenance task on a field.
 //
-// FRONTEND ONLY FOR NOW. The harvest_schedule table has existed since V1 with
-// exactly the right shape (zone_id, sched_date, task, supervisor_id, status)
-// but has no Java behind it, so there is nothing to POST to yet. Schedules
-// created here live in the page's state and are lost on reload — the banner
-// says so plainly rather than letting a supervisor believe a plan was saved.
+// THIS NOW SAVES. Until V28 there was no backend: harvest_schedule had sat in
+// the schema since V1 with no Java behind it, so this form built objects with
+// ids like `local-1733…` in the page's state and lost them on reload.
 //
-// The attachment upload IS real: it posts to the same endpoint the complaint
-// evidence uses, which already validates type and magic bytes.
+// Three things had to change before a row could exist at all:
+//
+//   1. A DATE. The form collected none, while sched_date is NOT NULL — so
+//      nothing it produced could ever have been stored. A section titled
+//      "Upcoming Harvest Schedule" could not schedule anything for a future
+//      day. The date input below is the fix, and it is required.
+//   2. A WORKER ID, not a typed name. This used to be an <input list> that
+//      accepted any string: a misspelling produced a schedule assigned to
+//      nobody and nothing downstream could tell. Same shape as the
+//      loan.worker_name mistake. It is a real select now.
+//   3. LOWERCASE type values. The column has a CHECK constraint, and every
+//      value that crosses this boundary in this schema is lowercase — sending
+//      "Daily" is how the `invalid input value for enum` class of bug starts.
+//      The label stays capitalised; only the wire value changed.
+//
+// The attachment upload was always real: it posts to the same endpoint the
+// complaint evidence uses, which already validates type and magic bytes.
 
 const HEADER = "bg-[#14493B]";
 const FIELD =
   "w-full rounded-xl border border-[#13483B]/30 bg-white px-4 py-2.5 text-sm text-[#14493B] placeholder-[#14493B]/35 outline-none transition focus:border-[#14493B] focus:ring-2 focus:ring-[#14493B]/15";
 const LABEL = "mb-1.5 block text-sm font-bold text-[#14493B]";
 
-const TYPES = ["Daily", "Weekly", "One-off", "Maintenance"];
+// value = what the column stores, label = what the supervisor reads.
+const TYPES = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "one-off", label: "One-off" },
+  { value: "maintenance", label: "Maintenance" },
+];
 
-export default function CreateScheduleModal({ open, fields, workers, onCreate, onClose }) {
+const today = () => new Date().toISOString().slice(0, 10);
+
+export default function CreateScheduleModal({
+  open,
+  fields,
+  workers,
+  schedules,
+  prefill,
+  onSaved,
+  onClose,
+}) {
   const [tab, setTab] = useState("new");
-  const [type, setType] = useState("Daily");
+  const [type, setType] = useState("daily");
   const [expected, setExpected] = useState("");
   const [zoneId, setZoneId] = useState("");
-  const [worker, setWorker] = useState("");
+  const [date, setDate] = useState(today());
+  const [workerId, setWorkerId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [attachment, setAttachment] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [queued, setQueued] = useState(false);
+  // Which existing schedule the Update tab is editing. Null = creating.
+  const [editingId, setEditingId] = useState(null);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -50,20 +86,49 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
   }, [onClose]);
 
   const reset = () => {
-    setType("Daily");
+    setType("daily");
     setExpected("");
     setZoneId("");
-    setWorker("");
+    setDate(today());
+    setWorkerId("");
     setTitle("");
     setDescription("");
     setAttachment(null);
     setError("");
     setDone(false);
+    setEditingId(null);
+  };
+
+  // Load an existing schedule into the same form. The Update tab used to be a
+  // dead end that said the backend did not exist; it does now, so it edits.
+  const loadForEdit = (s) => {
+    setEditingId(s.id);
+    setType(s.type || "one-off");
+    setExpected(s.expectedKg == null ? "" : String(s.expectedKg));
+    setZoneId(String(s.zoneId ?? ""));
+    setDate(s.date || today());
+    setWorkerId(s.workerId == null ? "" : String(s.workerId));
+    setTitle(s.title || "");
+    setDescription(s.description || "");
+    setAttachment(s.attachmentUrl ? { name: "Attached file", url: s.attachmentUrl } : null);
+    setError("");
+    setDone(false);
   };
 
   useEffect(() => {
-    if (open) reset();
-  }, [open]);
+    if (!open) return;
+    reset();
+    // Opened from the pluck advisor with a field already chosen. Only the field
+    // and a suggested title are filled -- the DATE is deliberately left on
+    // today for the supervisor to set, because when the work happens is the one
+    // decision the advisor is not entitled to make for them.
+    if (prefill) {
+      if (prefill.zoneId != null) setZoneId(String(prefill.zoneId));
+      if (prefill.title) setTitle(prefill.title);
+      setTab("new");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefill]);
 
   const upload = async (e) => {
     const file = e.target.files?.[0];
@@ -87,30 +152,90 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
     }
   };
 
-  const submit = (asDraft) => {
+  const submit = async (asDraft) => {
     if (!zoneId) {
       setError("Pick the field this schedule is for.");
+      return;
+    }
+    if (!date) {
+      setError("Pick the day this work is planned for.");
       return;
     }
     if (!title.trim()) {
       setError("Give the schedule a short title.");
       return;
     }
-    const field = fields.find((f) => String(f.id) === zoneId);
-    onCreate?.({
-      id: `local-${Date.now()}`,
-      type,
+
+    // One id per attempt, so a queued create replayed twice is deduped by the
+    // server instead of putting the same job on the board again (V29).
+    const clientUuid = editingId ? null : newUuid();
+
+    const body = {
       zoneId: Number(zoneId),
-      zoneName: field?.name || "",
-      expectedKg: expected ? Number(expected) : null,
-      worker: worker.trim() || null,
+      date,
       title: title.trim(),
-      description: description.trim(),
-      attachment,
+      description: description.trim() || null,
+      type,
+      expectedKg: expected === "" ? null : Number(expected),
+      // Empty string means "nobody assigned yet", which is a real state — not
+      // worker 0. Send null so the column stays NULL.
+      workerId: workerId === "" ? null : Number(workerId),
       status: asDraft ? "draft" : "planned",
-      createdAt: new Date().toISOString(),
-    });
-    setDone(true);
+      attachmentUrl: attachment?.url || null,
+      ...(clientUuid ? { clientUuid } : {}),
+    };
+
+    setSaving(true);
+    setError("");
+    try {
+      // Try the network, fall back to the IndexedDB outbox. A supervisor
+      // planning next week's round while standing in a dead spot can finish
+      // and walk away.
+      const { queued } = await queueOrSend({
+        path: editingId ? `/harvest-schedules/${editingId}` : "/harvest-schedules",
+        method: editingId ? "PUT" : "POST",
+        body,
+        clientUuid,
+      });
+
+      if (queued) {
+        // Nothing came back from a server we could not reach, so the
+        // optimistic row is built here from what we already know. It is marked
+        // pending so the board can say it exists only on this device, and given
+        // a local id that could never collide with a real one.
+        onSaved?.({
+          queued: true,
+          row: {
+            id: editingId ?? `pending-${clientUuid}`,
+            pending: true,
+            zoneId: body.zoneId,
+            zoneName: fields.find((f) => String(f.id) === zoneId)?.name || "",
+            date: body.date,
+            title: body.title,
+            description: body.description,
+            type: body.type,
+            expectedKg: body.expectedKg,
+            workerId: body.workerId,
+            workerName:
+              workers.find((w) => String(w.id) === workerId)?.fullName || null,
+            status: body.status,
+            attachmentUrl: body.attachmentUrl,
+            createdAt: new Date().toISOString(),
+            overdue: false,
+          },
+        });
+      } else {
+        // Online. The server owns the id, the owning supervisor and created_at,
+        // so the parent refetches rather than trusting a copy assembled here.
+        onSaved?.({ queued: false });
+      }
+      setQueued(queued);
+      setDone(true);
+    } catch (err) {
+      setError(apiError(err, "Could not save that schedule."));
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!open) return null;
@@ -141,11 +266,16 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
             <div className="flex flex-col items-center px-8 py-12 text-center">
               <LuCircleCheck size={60} strokeWidth={1.5} className="text-[#14493B]" />
               <h4 className="mt-5 text-xl font-extrabold text-[#14493B]">
-                Schedule Added
+                {queued
+                  ? "Saved on this device"
+                  : editingId
+                    ? "Schedule Updated"
+                    : "Schedule Added"}
               </h4>
               <p className="mt-2 max-w-sm text-sm text-[#14493B]/60">
-                It is showing on the board, but it is not saved to the server —
-                the harvest schedule backend is the next piece of work.
+                {queued
+                  ? "No network. This is stored on this phone and will sync by itself when you are back in signal — you can close the app."
+                  : "Saved. It is on the board for everyone and will still be there after a reload."}
               </p>
               <div className="mt-7 flex w-full max-w-xs flex-col gap-2">
                 <button
@@ -193,12 +323,40 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
                     {tab === "new" ? "Create New Schedule" : "Update a Schedule"}
                   </h4>
 
-                  {tab === "update" ? (
-                    <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-                      Updating an existing schedule needs the harvest schedule
-                      backend, which has not been built yet. Create a new one for
-                      now.
-                    </p>
+                  {tab === "update" && !editingId ? (
+                    // Pick which one to edit. This tab used to be an amber
+                    // "backend not built yet" notice; V28 and the harvest module
+                    // made it real, so it now does what its label promises.
+                    (schedules?.length ?? 0) === 0 ? (
+                      <p className="rounded-xl bg-[#F4FFE9] px-4 py-3 text-sm text-[#14493B]/70 ring-1 ring-[#13483B]/10">
+                        Nothing is scheduled yet. Create one first, then it can
+                        be edited here.
+                      </p>
+                    ) : (
+                      <ul className="max-h-72 space-y-2 overflow-y-auto">
+                        {schedules.map((s) => (
+                          <li key={s.id}>
+                            <button
+                              type="button"
+                              onClick={() => loadForEdit(s)}
+                              className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#13483B]/20 px-4 py-3 text-left transition hover:bg-[#F4FFE9]"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-sm font-bold text-[#14493B]">
+                                  {s.title || "Planned work"}
+                                </span>
+                                <span className="block text-xs text-[#14493B]/55">
+                                  {s.zoneName} · {s.date}
+                                </span>
+                              </span>
+                              <span className="shrink-0 rounded-full bg-[#D3FFAC] px-2.5 py-1 text-[10px] font-bold uppercase text-[#14493B]">
+                                {s.status}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )
                   ) : (
                     <>
                       {error && (
@@ -220,8 +378,8 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
                               className={`${FIELD} appearance-none pr-10`}
                             >
                               {TYPES.map((t) => (
-                                <option key={t} value={t}>
-                                  {t}
+                                <option key={t.value} value={t.value}>
+                                  {t.label}
                                 </option>
                               ))}
                             </select>
@@ -278,22 +436,52 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
                         </div>
 
                         <div>
+                          <label className={LABEL} htmlFor="cs-date">
+                            Scheduled for*
+                          </label>
+                          <input
+                            id="cs-date"
+                            type="date"
+                            value={date}
+                            onChange={(e) => {
+                              setDate(e.target.value);
+                              setError("");
+                            }}
+                            className={FIELD}
+                          />
+                          {/* The one field this form never had. Without it
+                              nothing could be stored, and "upcoming" work had
+                              no day to be upcoming on. */}
+                          <p className="mt-1 text-[11px] text-[#14493B]/50">
+                            The day the work should happen — not today's date.
+                          </p>
+                        </div>
+
+                        <div>
                           <label className={LABEL} htmlFor="cs-worker">
                             Assign Worker
                           </label>
-                          <input
-                            id="cs-worker"
-                            list="cs-worker-list"
-                            value={worker}
-                            onChange={(e) => setWorker(e.target.value)}
-                            placeholder="Worker ID or Name"
-                            className={FIELD}
-                          />
-                          <datalist id="cs-worker-list">
-                            {workers.map((w) => (
-                              <option key={w.id} value={w.fullName} />
-                            ))}
-                          </datalist>
+                          <div className="relative">
+                            {/* A select, not a free-text datalist. A typed name
+                                that matched nobody used to save silently. */}
+                            <select
+                              id="cs-worker"
+                              value={workerId}
+                              onChange={(e) => setWorkerId(e.target.value)}
+                              className={`${FIELD} appearance-none pr-10`}
+                            >
+                              <option value="">Nobody assigned yet</option>
+                              {workers.map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.fullName}
+                                </option>
+                              ))}
+                            </select>
+                            <LuChevronDown
+                              size={15}
+                              className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[#14493B]/50"
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -355,21 +543,36 @@ export default function CreateScheduleModal({ open, fields, workers, onCreate, o
                 </div>
               </div>
 
-              {tab === "new" && (
+              {(tab === "new" || editingId) && (
                 <div className="flex items-center justify-end gap-3 border-t border-[#13483B]/10 px-6 py-4">
+                  {editingId && (
+                    <button
+                      type="button"
+                      onClick={reset}
+                      className="mr-auto rounded-xl px-4 py-2.5 text-sm font-semibold text-[#14493B]/60 transition hover:bg-[#CFE8DB]/50"
+                    >
+                      Pick a different one
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => submit(true)}
-                    className="rounded-xl px-5 py-2.5 text-sm font-semibold text-[#14493B]/70 transition hover:bg-[#CFE8DB]/50"
+                    disabled={saving}
+                    className="rounded-xl px-5 py-2.5 text-sm font-semibold text-[#14493B]/70 transition hover:bg-[#CFE8DB]/50 disabled:opacity-50"
                   >
                     Save Draft
                   </button>
                   <button
                     type="button"
                     onClick={() => submit(false)}
-                    className={`rounded-xl ${HEADER} px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110`}
+                    disabled={saving}
+                    className={`rounded-xl ${HEADER} px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-50`}
                   >
-                    Create Schedule
+                    {saving
+                      ? "Saving…"
+                      : editingId
+                        ? "Save changes"
+                        : "Create Schedule"}
                   </button>
                 </div>
               )}
