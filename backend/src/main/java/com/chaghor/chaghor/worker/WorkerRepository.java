@@ -8,6 +8,14 @@ import java.util.List;
 
 public interface WorkerRepository extends JpaRepository<Worker, Long> {
 
+    // The join the entire worker console rests on: signed-in user -> their own
+    // worker row. `workers.user_id` has existed since V1 and was never read.
+    //
+    // `deletedAt IS NULL` matters here as much as anywhere: a retired worker's
+    // account must not still open a live console, but their payroll history has
+    // to survive, which is why the row is kept rather than deleted.
+    java.util.Optional<Worker> findFirstByUserIdAndDeletedAtIsNull(Long userId);
+
     // (existsByPhone was replaced by existsByPhoneAndDeletedAtIsNull below --
     //  a retired worker must not reserve a phone number forever.)
 

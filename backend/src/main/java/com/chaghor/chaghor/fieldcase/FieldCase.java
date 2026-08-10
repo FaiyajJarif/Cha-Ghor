@@ -82,4 +82,27 @@ public class FieldCase {
 
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
+
+    // CONFIDENTIAL, NOT ANONYMOUS (V31).
+    //
+    // `submittedBy` and `submitterName` above are still populated. What this
+    // flag controls is whether any response or screen may EXPOSE them --
+    // CaseResponse nulls both when it is set, and the admin list shows
+    // "গোপনীয় অভিযোগ" in place of a name.
+    //
+    // Keeping the identity in the row is deliberate: a grievance channel with no
+    // accountability at all is one an estate will not enable. Never claim to a
+    // worker that their identity is not recorded, only that it is not shown.
+    @Column(name = "confidential", nullable = false)
+    @Builder.Default
+    private boolean confidential = false;
+
+    // When it happened, as against when it was reported.
+    @Column(name = "incident_date")
+    private java.time.LocalDate incidentDate;
+
+    // Offline idempotency for complaints filed in a dead spot. Two copies of the
+    // same grievance is exactly the noise that makes a channel look unreliable.
+    @Column(name = "client_uuid")
+    private java.util.UUID clientUuid;
 }

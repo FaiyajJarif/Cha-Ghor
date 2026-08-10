@@ -41,6 +41,14 @@ public class Worker {
 
     private LocalDate dob;
 
+    // male | female | other, or null when the office never recorded it (V31).
+    // VARCHAR + CHECK, not a native enum, per the rule V23 wrote down. Null is
+    // rendered as "records e nei" on the worker's own profile rather than
+    // guessed -- that page is the one a worker is most likely to read closely
+    // and least able to get corrected.
+    @Column(name = "gender", length = 10)
+    private String gender;
+
     @Column(name = "zone_id")
     private Long zoneId;
 

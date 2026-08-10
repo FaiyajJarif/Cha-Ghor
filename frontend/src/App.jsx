@@ -18,6 +18,9 @@ import SupervisorLeaf from "./pages/supervisor/SupervisorLeaf";
 import SupervisorFields from "./pages/supervisor/SupervisorFields";
 import SupervisorWeather from "./pages/supervisor/SupervisorWeather";
 import SupervisorBroadcast from "./pages/supervisor/SupervisorBroadcast";
+import WorkerLayout from "./components/worker/WorkerLayout";
+import WorkerProfile from "./pages/worker/WorkerProfile";
+import WorkerWages from "./pages/worker/WorkerWages";
 import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
@@ -94,6 +97,24 @@ export default function App() {
           <Route path="fields" element={<SupervisorFields />} />
           <Route path="weather" element={<SupervisorWeather />} />
           <Route path="broadcast" element={<SupervisorBroadcast />} />
+        </Route>
+
+        {/* Worker console — a worker's own data only. Bangla throughout.
+            Admin and supervisor may open it, but every endpoint underneath
+            resolves the worker from the JWT, so they see their OWN record or a
+            clear "not linked to a worker" message — never someone else's. */}
+        <Route
+          path="/worker"
+          element={
+            <ProtectedRoute roles={["worker", "supervisor", "admin"]}>
+              <WorkerLayout />
+            </ProtectedRoute>
+          }
+        >
+          {/* An index route, or /worker renders the shell around an empty
+              middle — which is exactly what it did at first. */}
+          <Route index element={<WorkerProfile />} />
+          <Route path="wages" element={<WorkerWages />} />
         </Route>
       </Routes>
     </>
