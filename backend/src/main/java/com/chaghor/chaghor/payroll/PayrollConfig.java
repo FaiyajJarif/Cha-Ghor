@@ -37,6 +37,25 @@ public class PayrollConfig {
     @Builder.Default
     private BigDecimal gradeBonusRate = new BigDecimal("1.00");
 
+    // ---- borrowing limits (V32) --------------------------------------------
+    // Most a worker may OWE at once, not most they may request. The guard is
+    // `outstanding + requested <= cap`, so someone holding ৳300 can draw ৳200.
+
+    // অগ্রিম: recovered by withholding ALL daily earnings until clear, so this
+    // is also how many days the worker will be paid nothing.
+    @Column(name = "advance_cap", nullable = false)
+    @Builder.Default
+    private BigDecimal advanceCap = new BigDecimal("500.00");
+
+    // ঋণ: recovered a fixed amount per day, so the worker keeps the remainder.
+    @Column(name = "loan_cap", nullable = false)
+    @Builder.Default
+    private BigDecimal loanCap = new BigDecimal("2000.00");
+
+    @Column(name = "loan_daily_deduction", nullable = false)
+    @Builder.Default
+    private BigDecimal loanDailyDeduction = new BigDecimal("20.00");
+
     @Column(name = "effective_from", nullable = false)
     @Builder.Default
     private LocalDate effectiveFrom = LocalDate.now();

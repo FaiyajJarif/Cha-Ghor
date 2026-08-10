@@ -53,6 +53,17 @@ class ReportRequest(BaseModel):
     period_label: Optional[str] = None
 
 
+class LoanNoteRequest(BaseModel):
+    amount: float = 0
+    daily_deduction: float = 0
+    working_days: Optional[int] = None
+    months: Optional[int] = None
+    current_outstanding: float = 0
+    total_after: float = 0
+    recent_avg_net_pay: Optional[float] = None
+    instalment_pct_of_pay: Optional[int] = None
+
+
 class SmsRewriteRequest(BaseModel):
     title: Optional[str] = None
     body: str = ""
@@ -221,6 +232,69 @@ def report_endpoint(req: ReportRequest):
         raise HTTPException(status_code=502, detail="Model returned an empty report")
     return {"summary": summary, "provider": provider}
 
+
+
+# --- loan affordability note --------------------------------------------------
+#
+# One sentence, in Bangla, about what a loan would mean for this worker.
+#
+# EVERY FIGURE IS COMPUTED IN JAVA before this is called: the instalment, the
+# term in the worker's OWN working days, the new total owed, and the instalment
+# as a share of their recent take-home. The model does not calculate; it puts
+# arithmetic into a sentence somebody can read quickly on a phone.
+#
+# IT IS EXPLICITLY ALLOWED TO DISCOURAGE. Most assistants are tuned to be
+# agreeable, which is the wrong instinct when the subject is a low-paid worker
+# taking on debt. If the instalment is a large share of their pay, saying so
+# plainly is the useful answer -- and the prompt says so, because a model that
+# only ever reassures would make this feature worse than no feature.
+#
+# IT APPROVES NOTHING. The request is a separate call, the status is PENDING,
+# and only an admin can move it.
+_LOAN_NOTE_SYSTEM = """You write one short note for a tea estate worker in Sylhet, Bangladesh, who is considering asking for a loan.
+
+You are given figures that have ALREADY been calculated from this worker's own
+records. Your job is to say what they mean, in plain Bangla, in 2-3 short
+sentences.
+
+RULES, all of them absolute:
+- Use ONLY the numbers given. Never calculate a new one, never estimate, never
+  round differently.
+- Do NOT approve, promise, or predict what the office will decide. You do not
+  know, and implying it is cruel if you are wrong.
+- Do NOT encourage borrowing. Do not call it a good idea, an opportunity, or
+  easy.
+- If the instalment is a large share of their pay, or the term is long, or they
+  will owe considerably more than they are borrowing, SAY SO plainly. That is
+  the most useful thing you can do here.
+- No greeting, no sign-off, no markdown, no emoji.
+- Write in Bangla. Keep numbers in Western digits (1500, not ১৫০০) and money as
+  \u09f3.
+
+Return only the note."""
+
+
+def _loan_note_messages(req: "LoanNoteRequest"):
+    payload = json.dumps(req.model_dump() if hasattr(req, "model_dump") else req.dict(),
+                         default=str)[:2000]
+    return [
+        {"role": "system", "content": _LOAN_NOTE_SYSTEM},
+        {"role": "user", "content": f"FIGURES (JSON):\n{payload}"},
+    ]
+
+
+@app.post("/loan-note")
+def loan_note_endpoint(req: LoanNoteRequest):
+    if not req.amount:
+        raise HTTPException(status_code=400, detail="No amount supplied")
+    try:
+        text, provider = complete("loan_note", _loan_note_messages(req))
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
+    note = (text or "").strip()
+    if not note:
+        raise HTTPException(status_code=502, detail="Model returned an empty note")
+    return {"note": note, "provider": provider}
 
 
 # --- broadcast -> SMS rewrite -------------------------------------------------

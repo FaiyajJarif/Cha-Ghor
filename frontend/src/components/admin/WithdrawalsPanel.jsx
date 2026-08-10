@@ -387,6 +387,19 @@ export default function WithdrawalsPanel() {
                         <div>
                           <p className="font-semibold text-cg-ink">
                             {r.workerName || "Worker #" + r.workerId}
+                            {/* Which kind. Both are cash out before payday and
+                                were indistinguishable rows until V33 — an
+                                admin could not tell a wage release from a debt,
+                                and neither could the queue. */}
+                            <span
+                              className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                r.kind === "salary"
+                                  ? "bg-sky-100 text-sky-700"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              {r.kind === "salary" ? "Wages" : "Advance"}
+                            </span>
                           </p>
                           <p className="text-xs text-cg-ink/50">ID {r.workerId}</p>
                         </div>

@@ -34,17 +34,20 @@ public class LoanService {
     private final LoanRepaymentEntryRepository repaymentRepository;
     private final FinanceService financeService;
     private final com.chaghor.chaghor.audit.AuditService auditService;
+    private final com.chaghor.chaghor.notification.NotificationService notifications;
 
     public LoanService(LoanRepository repo,
                        com.chaghor.chaghor.worker.WorkerRepository workerRepository,
                        LoanRepaymentEntryRepository repaymentRepository,
                        FinanceService financeService,
-                       com.chaghor.chaghor.audit.AuditService auditService) {
+                       com.chaghor.chaghor.audit.AuditService auditService,
+                       com.chaghor.chaghor.notification.NotificationService notifications) {
         this.repo = repo;
         this.workerRepository = workerRepository;
         this.repaymentRepository = repaymentRepository;
         this.financeService = financeService;
         this.auditService = auditService;
+        this.notifications = notifications;
     }
 
     @Transactional(readOnly = true)
@@ -98,6 +101,10 @@ public class LoanService {
     }
 
     @Transactional
+    // Pushing `loan.decided` at the end of this method is what puts a loan
+    // decision in the worker's bell. Until now the ONLY signal was an SMS: a
+    // worker with the app open watched a pending request sit there unchanged
+    // after the office had already approved it.
     public LoanRequestResponse decide(Long id, String action, Long userId) {
         Loan loan = repo.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Loan request not found"));
@@ -143,6 +150,20 @@ public class LoanService {
                         "workerName", loan.getWorkerName(),
                         "reference", loan.getReference(),
                         "decidedByHuman", true));
+
+        // Bell. Best-effort and LAST: a socket failure must never fail a
+        // decision that has already been written and audited.
+        try {
+            boolean approved = loan.getStatus() == LoanStatus.ACTIVE;
+            notifications.send(
+                    approved ? "ঋণ অনুমোদিত" : "ঋণের আবেদন গ্রহণ করা হয়নি",
+                    approved
+                            ? "আপনার ঋণের আবেদন অনুমোদন করা হয়েছে।"
+                            : "আপনার ঋণের আবেদন এবার গ্রহণ করা হয়নি।",
+                    "loan.decided", loan.getId());
+        } catch (Exception ignored) {
+            // best-effort by design, as FieldCaseService.push is
+        }
         return toRequest(loan);
     }
 

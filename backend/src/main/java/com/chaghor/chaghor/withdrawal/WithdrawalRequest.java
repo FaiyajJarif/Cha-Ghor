@@ -43,6 +43,20 @@ public class WithdrawalRequest {
     @Builder.Default
     private WithdrawalStatus status = WithdrawalStatus.pending;
 
+    // salary or advance. The difference decides whether future earnings are
+    // withheld, and it is the reason V33 exists.
+    //
+    // NOTE THE MAPPING: plain @Enumerated(STRING) against a VARCHAR column,
+    // NOT the @JdbcTypeCode(NAMED_ENUM) used by `method` and `status` above.
+    // Those two are native Postgres enums from V1; `kind` is VARCHAR + CHECK,
+    // which is what new schema uses (V23). Copying the NAMED_ENUM annotation
+    // here would make Hibernate look for a `withdrawal_kind` Postgres type that
+    // does not exist, and the application would fail to start.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kind", nullable = false, length = 16)
+    @Builder.Default
+    private WithdrawalKind kind = WithdrawalKind.advance;
+
     // DB default now(); let Postgres stamp it on insert.
     @Column(name = "requested_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime requestedAt;

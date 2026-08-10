@@ -22,5 +22,18 @@ public record PayrollConfigRequest(
         BigDecimal surplusRate,
 
         @DecimalMin(value = "0.0", message = "Grade bonus rate cannot be negative")
-        BigDecimal gradeBonusRate) {
+        BigDecimal gradeBonusRate,
+
+        // Borrowing limits. Zero is allowed and means "no borrowing of this
+        // kind on this estate"; negative would invert the guard that stops a
+        // worker drawing without bound, so it is refused here and again by
+        // chk_payroll_config_limits_nonneg.
+        @DecimalMin(value = "0.0", message = "The advance limit cannot be negative")
+        BigDecimal advanceCap,
+
+        @DecimalMin(value = "0.0", message = "The loan limit cannot be negative")
+        BigDecimal loanCap,
+
+        @DecimalMin(value = "0.0", message = "The daily loan deduction cannot be negative")
+        BigDecimal loanDailyDeduction) {
 }

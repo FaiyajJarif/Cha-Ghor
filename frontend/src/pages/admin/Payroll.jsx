@@ -400,6 +400,9 @@ export default function Payroll() {
         leafQuotaKg: Number(cfgDraft.leafQuotaKg) || 0,
         surplusRate: Number(cfgDraft.surplusRate) || 0,
         gradeBonusRate: Number(cfgDraft.gradeBonusRate) || 0,
+        advanceCap: Number(cfgDraft.advanceCap) || 0,
+        loanCap: Number(cfgDraft.loanCap) || 0,
+        loanDailyDeduction: Number(cfgDraft.loanDailyDeduction) || 0,
       });
       setConfig(data);
       setCfgOpen(false);
@@ -586,6 +589,28 @@ export default function Payroll() {
             value={config ? Number(config.leafQuotaKg) : "—"}
             unit="kg / day"
             info="The daily leaf target in kg. Only leaf plucked above this quota earns the surplus rate."
+          />
+          {/* Borrowing limits (V32). Shown on the same strip as the wage rates
+              because they are the same kind of thing — one row per estate,
+              latest effective_from wins, every change on the same audit trail.
+              All three are edited through "Edit rates" above. */}
+          <RateField
+            label="Advance Limit"
+            value={config ? taka(config.advanceCap) : "—"}
+            unit="max owed"
+            info="The most a worker may owe in advances at once. An advance is money against days not yet worked, and is recovered by withholding ALL of their daily earnings until it clears — so this is also roughly how many days they will be paid nothing."
+          />
+          <RateField
+            label="Loan Limit"
+            value={config ? taka(config.loanCap) : "—"}
+            unit="max owed"
+            info="The most a worker may owe in loans at once. Enforced when a worker files a request; an unpaid loan already blocks a new one separately."
+          />
+          <RateField
+            label="Loan Recovery"
+            value={config ? taka(config.loanDailyDeduction) : "—"}
+            unit="/ working day"
+            info="Taken from each day's earnings toward a loan, BEFORE any advance recovery. The worker keeps whatever is left, so a loan never leaves them with nothing. A day they do not work deducts nothing."
           />
         </div>
       </div>
@@ -1077,17 +1102,22 @@ export default function Payroll() {
             className="fixed inset-0 z-[80] grid place-items-center bg-black/40 p-4"
             onClick={() => setCfgOpen(false)}
           >
+            {/* max-w-2xl and a two-column body: seven stacked fields made this
+                dialog taller than the viewport, so Save could not be reached.
+                max-h with flex-col keeps the header and footer fixed and lets
+                only the field list scroll, instead of the whole dialog growing
+                past the screen. */}
             <form
               onClick={(e) => e.stopPropagation()}
               onSubmit={saveConfig}
-              className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+              className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
             >
               <ModalHeader
                 title="Edit Operating Rates"
                 subtitle="Set the pay rules used to calculate every wage"
                 onClose={() => setCfgOpen(false)}
               />
-              <div className="p-6">
+              <div className="min-h-0 flex-1 overflow-y-auto p-6">
                 <p className="text-xs text-cg-ink/50">
                   Saving starts a new rate period from today. Base wage is the
                   fallback; each worker's own daily wage is used when set.
@@ -1097,23 +1127,47 @@ export default function Payroll() {
                     {cfgErr}
                   </div>
                 )}
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 grid gap-x-5 gap-y-3 sm:grid-cols-2">
                   {[
                     ["baseDailyWage", "Base daily wage (৳)"],
                     ["leafQuotaKg", "Leaf quota (kg / day)"],
                     ["surplusRate", "Surplus rate (৳ / kg over quota)"],
                     ["gradeBonusRate", "Grade-A bonus (৳ / kg)"],
-                  ].map(([key, label]) => (
+                    [
+                      "advanceCap",
+                      "Advance limit (৳)",
+                      "Most a worker may owe in advances at once. An advance is recovered by withholding ALL of their daily earnings until it clears, so this is also roughly how many days they will be paid nothing.",
+                    ],
+                    [
+                      "loanCap",
+                      "Loan limit (৳)",
+                      "Most a worker may owe in loans at once.",
+                    ],
+                    [
+                      "loanDailyDeduction",
+                      "Loan recovery (৳ / working day)",
+                      "Taken from each day's earnings toward a loan, before any advance recovery. The worker keeps the remainder, so a loan never leaves them with nothing.",
+                    ],
+                  ].map(([key, label, info]) => (
                     <label
                       key={key}
                       className="block text-sm font-semibold text-cg-ink/70"
                     >
                       {label}
+                      {/* These three change what a worker may borrow from the
+                          next request onward. Lowering one never claws back an
+                          advance already taken, and nothing here recomputes an
+                          existing payslip. */}
+                      {info && (
+                        <span className="mt-0.5 block text-xs font-normal text-cg-ink/45">
+                          {info}
+                        </span>
+                      )}
                       <input
                         type="number"
                         min="0"
                         step="0.01"
-                        value={cfgDraft[key]}
+                        value={cfgDraft[key] ?? ""}
                         onChange={(e) =>
                           setCfgDraft((c) => ({ ...c, [key]: e.target.value }))
                         }
@@ -1123,7 +1177,7 @@ export default function Payroll() {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end gap-2 border-t border-cg-green/10 px-6 py-4">
+              <div className="flex shrink-0 justify-end gap-2 border-t border-cg-green/10 px-6 py-4">
                 <button
                   type="button"
                   onClick={() => setCfgOpen(false)}

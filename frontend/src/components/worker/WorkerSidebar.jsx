@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { LuLeaf, LuLogOut, LuSettings } from "react-icons/lu";
-import { WORKER_NAV } from "../../lib/workerNav";
+import { WORKER_NAV, WORKER_SETTINGS } from "../../lib/workerNav";
 import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK } from "../../lib/ui";
 
@@ -70,13 +70,25 @@ export default function WorkerSidebar() {
       </nav>
 
       <div className="space-y-2 border-t border-cg-dark/15 px-3 py-4">
+        {/* Settings sits here rather than in the nav above. This slot already
+            existed as a dead "সেটিংস পরে যুক্ত হবে" label; it is now the real
+            link, so the destination exists in exactly one place. */}
+        <NavLink
+          to={WORKER_SETTINGS.path}
+          end
+          className={({ isActive }) =>
+            `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+              isActive
+                ? "bg-cg-dark text-white"
+                : "text-cg-ink/80 hover:bg-white/40"
+            }`
+          }
+        >
+          <LuSettings size={18} /> {WORKER_SETTINGS.label}
+        </NavLink>
         <button onClick={signOut} className={BTN_DARK + " w-full"}>
           <LuLogOut size={16} /> লগ আউট
         </button>
-        <p className="px-1 text-center text-[10px] text-cg-ink/40">
-          <LuSettings size={10} className="mr-1 inline" />
-          সেটিংস পরে যুক্ত হবে
-        </p>
       </div>
     </aside>
   );

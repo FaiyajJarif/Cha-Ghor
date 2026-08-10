@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LuPaperclip, LuDownload, LuFileText, LuTrash2 } from "react-icons/lu";
+import { LuPaperclip, LuDownload, LuFileText, LuTrash2, LuMic } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { BTN_GHOST } from "../../lib/ui";
@@ -15,8 +15,18 @@ import { BTN_GHOST } from "../../lib/ui";
 //
 // Object URLs are revoked on unmount and before each refetch, otherwise the
 // blob stays in memory for the life of the tab.
+//
+// AUDIO. A worker who cannot write records the complaint instead of typing it
+// (VoiceNote.jsx), and it arrives here as the same evidence attachment a photo
+// would. It is played, not transcribed: nothing in this project converts speech
+// to text, so nothing can put words a worker did not say into a grievance about
+// a named person.
+//
+// The <audio> element gets the same blob-through-axios treatment as the image,
+// for the same reason -- a bare src sends no Authorization header and 401s.
 
-const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf";
+const ACCEPT =
+  "image/png,image/jpeg,image/webp,application/pdf,audio/webm,audio/mp4,audio/ogg";
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export default function CaseEvidence({ caseId, evidenceUrl, canEdit, onChanged }) {
@@ -48,7 +58,15 @@ export default function CaseEvidence({ caseId, evidenceUrl, canEdit, onChanged }
       const made = URL.createObjectURL(res.data);
       urlRef.current = made;
       setObjectUrl(made);
-      setKind(type === "application/pdf" ? "pdf" : "image");
+      // The blob's own type, which the server sets from the stored extension
+      // in CaseAttachmentService.contentTypeOf.
+      setKind(
+        type === "application/pdf"
+          ? "pdf"
+          : type.startsWith("audio/")
+            ? "audio"
+            : "image",
+      );
     } catch (err) {
       setError(apiError(err, "The attachment could not be loaded."));
     } finally {
@@ -74,7 +92,7 @@ export default function CaseEvidence({ caseId, evidenceUrl, canEdit, onChanged }
     // Checked here too so the user gets an instant answer instead of waiting
     // for a 10MB round trip to be rejected. The backend still enforces it.
     if (file.size > MAX_BYTES) {
-      setError("That file is larger than 10MB. Please attach a smaller photo or PDF.");
+      setError("That file is larger than 10MB. Please attach a smaller file.");
       return;
     }
     setBusy(true);
@@ -109,7 +127,7 @@ export default function CaseEvidence({ caseId, evidenceUrl, canEdit, onChanged }
     <div>
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-cg-dark">
-          Attached Evidence / Field Visuals
+          Attached Evidence / Voice Note
         </p>
         {canEdit && (
           <div className="flex items-center gap-2">
@@ -157,6 +175,23 @@ export default function CaseEvidence({ caseId, evidenceUrl, canEdit, onChanged }
       ) : !evidenceUrl ? (
         <div className="grid h-32 w-full max-w-xs place-items-center rounded-xl border border-dashed border-cg-lime bg-cg-lime/10 text-xs text-cg-dark/40">
           No attachment
+        </div>
+      ) : kind === "audio" ? (
+        // The browser's own controls: play, pause, seek and a duration, which
+        // is more than a custom player would earn here. Nothing autoplays --
+        // this is a grievance, and it may be about somebody in the room.
+        <div className="max-w-md rounded-xl border border-cg-lime/60 bg-cg-lime/10 p-3">
+          <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-cg-dark">
+            <LuMic size={14} /> Voice note from the worker
+          </p>
+          <audio src={objectUrl} controls preload="metadata" className="w-full" />
+          <a
+            href={objectUrl}
+            download
+            className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-cg-dark/70 hover:text-cg-dark"
+          >
+            <LuDownload size={12} /> Download recording
+          </a>
         </div>
       ) : kind === "pdf" ? (
         // PDFs are offered as a link rather than embedded: an inline viewer

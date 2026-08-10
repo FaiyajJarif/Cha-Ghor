@@ -36,6 +36,43 @@ public class DataInitializer implements CommandLineRunner {
         seed("worker", "worker@chaghor.local", "worker123", Role.worker);
 
         seedWorkforce();
+        linkWorkerAccount();
+    }
+
+    // Connect the `worker` demo account to an actual worker row.
+    //
+    // WHY THIS IS SEPARATE FROM seedWorkforce()
+    //   seedWorkforce() returns early once any worker exists, so on a database
+    //   that has been running a while it never executes again. The link has to
+    //   be its own idempotent step or every existing install stays broken.
+    //
+    // WHY IT MATTERS AT ALL
+    //   `workers.user_id` has existed since V1 and nothing ever populated it.
+    //   The entire worker console resolves the signed-in user through that
+    //   column, so without it the demo account signs in successfully and then
+    //   gets "This account is not linked to a worker record yet" on every
+    //   screen -- which looks like a bug in the console rather than missing
+    //   seed data.
+    //
+    // Deliberately conservative: it only acts when the account has no worker
+    // AND there is a worker with no account. It never reassigns an existing
+    // link, so it cannot quietly move somebody's payroll onto another login.
+    private void linkWorkerAccount() {
+        userRepository.findByUsername("worker").ifPresent(u -> {
+            if (workerRepository.findFirstByUserIdAndDeletedAtIsNull(u.getId()).isPresent()) {
+                return;   // already linked, nothing to do
+            }
+            workerRepository.findAll().stream()
+                    .filter(w -> w.getUserId() == null && w.getDeletedAt() == null)
+                    .findFirst()
+                    .ifPresent(w -> {
+                        w.setUserId(u.getId());
+                        workerRepository.save(w);
+                        log.warn("Linked login 'worker' -> worker #{} ({}). "
+                                        + "The worker console reads this link.",
+                                w.getId(), w.getFullName());
+                    });
+        });
     }
 
     private void seed(String username, String email, String rawPassword, Role role) {

@@ -56,6 +56,7 @@ public class PayrollService {
     private final PendingRecoveryRepository pendingRecoveryRepository;
     private final LoanService loanService;
     private final com.chaghor.chaghor.audit.AuditService auditService;
+    private final com.chaghor.chaghor.notification.NotificationService notifications;
 
     // ---- Reads -------------------------------------------------------------
 
@@ -313,6 +314,19 @@ public class PayrollService {
         // runs in its own transaction so it never affects the payroll/finance commit.
         smsService.notifyPayrollPaid(p.getWorkerId(), p.getNetPayable());
 
+        // Tell every open screen. Without this the worker learns he was paid by
+        // reloading the page on the off-chance -- the SMS reaches his phone but
+        // the app he is holding shows the old figure until he pulls to refresh.
+        //
+        // Best-effort, and AFTER the ledger posting and the loan recovery above.
+        // A socket failure must never fail a payment that has already committed.
+        try {
+            notifications.send("বেতন পরিশোধ",
+                    "আপনার বেতন পরিশোধ করা হয়েছে।", "payroll.saved", p.getId());
+        } catch (Exception ignored) {
+            // best-effort by design, exactly as FieldCaseService.push is
+        }
+
         // Paying is the single most consequential action in the system: cash
         // leaves, loans are settled, an SMS goes out. Record who did it.
         auditService.recordTransition("payroll", id, "approved", "paid",
@@ -353,7 +367,10 @@ public class PayrollService {
                 "baseDailyWage", nz(c.getBaseDailyWage()),
                 "leafQuotaKg", nz(c.getLeafQuotaKg()),
                 "surplusRate", nz(c.getSurplusRate()),
-                "gradeBonusRate", nz(c.getGradeBonusRate()));
+                "gradeBonusRate", nz(c.getGradeBonusRate()),
+                "advanceCap", nz(c.getAdvanceCap()),
+                "loanCap", nz(c.getLoanCap()),
+                "loanDailyDeduction", nz(c.getLoanDailyDeduction()));
         if (req.baseDailyWage() != null) {
             c.setBaseDailyWage(req.baseDailyWage());
         }
@@ -365,6 +382,19 @@ public class PayrollService {
         }
         if (req.gradeBonusRate() != null) {
             c.setGradeBonusRate(req.gradeBonusRate());
+        }
+        // Raising a limit lets every worker borrow more from the next request
+        // onward; LOWERING one never claws back an advance already taken, so a
+        // worker can legitimately sit above the cap until they have repaid.
+        // Nothing here recomputes an existing payslip.
+        if (req.advanceCap() != null) {
+            c.setAdvanceCap(req.advanceCap());
+        }
+        if (req.loanCap() != null) {
+            c.setLoanCap(req.loanCap());
+        }
+        if (req.loanDailyDeduction() != null) {
+            c.setLoanDailyDeduction(req.loanDailyDeduction());
         }
         c.setEffectiveFrom(LocalDate.now());
         c.setUpdatedBy(userId(username));
@@ -546,7 +576,9 @@ public class PayrollService {
     private PayrollConfigResponse toConfigResponse(PayrollConfig c) {
         return new PayrollConfigResponse(
                 c.getId(), c.getBaseDailyWage(), c.getLeafQuotaKg(),
-                c.getSurplusRate(), c.getGradeBonusRate(), c.getEffectiveFrom());
+                c.getSurplusRate(), c.getGradeBonusRate(),
+                c.getAdvanceCap(), c.getLoanCap(), c.getLoanDailyDeduction(),
+                c.getEffectiveFrom());
     }
 
     private static boolean hasText(String s) {

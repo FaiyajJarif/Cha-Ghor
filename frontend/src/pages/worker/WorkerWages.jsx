@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { LuInfo, LuTriangleAlert, LuHandCoins } from "react-icons/lu";
+import { LuInfo, LuTriangleAlert, LuHandCoins, LuMic, LuPrinter } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import TakeMoneyModal from "../../components/worker/TakeMoneyModal";
+import MoneyActions from "../../components/worker/MoneyActions";
+import DailyLedger from "../../components/worker/DailyLedger";
+import PayChangePanel from "../../components/worker/PayChangePanel";
+import MyPayslip from "../../components/worker/MyPayslip";
+import LoanRequestModal from "../../components/worker/LoanRequestModal";
+import {
+  listenOnce,
+  heardLoan,
+  voiceSupport,
+  onVoicesReady,
+  voiceErrorMessage,
+} from "../../lib/voice";
 
 // বেতন ও ঋণ — a worker's own pay, shown line by line.
 //
@@ -51,6 +64,20 @@ const STATUS_BN = {
   paid: { label: "পরিশোধিত", tone: "bg-emerald-100 text-emerald-700" },
 };
 
+// Withdrawal statuses are lowercase Postgres enum labels.
+const ADVANCE_BN = {
+  pending: { label: "অপেক্ষায়", tone: "bg-amber-100 text-amber-800" },
+  paid: { label: "দেওয়া হয়েছে", tone: "bg-emerald-100 text-emerald-700" },
+  rejected: { label: "বাতিল", tone: "bg-rose-100 text-rose-700" },
+};
+
+const dateBn = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${bn(d.getDate())} ${MONTHS_BN[d.getMonth()]}`;
+};
+
 // The seven lines, in the order the engine computes them. `sign` drives the
 // colour and the minus sign; nothing here is a category the engine does not have.
 const EARNINGS = [
@@ -89,16 +116,39 @@ function Line({ label, hint, value, negative }) {
 export default function WorkerWages() {
   const [wages, setWages] = useState(null);
   const [loans, setLoans] = useState(null);
+  const [advances, setAdvances] = useState([]);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  // Needed by TakeMoneyModal above. MoneyActions fetches its own copy for its
+  // own display; this one exists only so the modal opened from elsewhere on
+  // the page carries the same ceiling.
+  const [limits, setLimits] = useState(null);
+  const [loanOpen, setLoanOpen] = useState(false);
+  const [slipOpen, setSlipOpen] = useState(false);
+  // The profile call, purely so the printed slip carries a name, a worker id
+  // and a field. Failing it must not break the wages page.
+  const [profile, setProfile] = useState(null);
+  // Was the dialog opened by voice? Decides whether it speaks back — someone
+  // who tapped is reading and should not be spoken at unexpectedly.
+  const [byVoice, setByVoice] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [voiceOk, setVoiceOk] = useState(false);
+  const [heard, setHeard] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [w, l] = await Promise.all([
+    const [w, l, a, lim, prof] = await Promise.all([
       api.get("/me/worker/wages"),
       api.get("/me/worker/loans").catch(() => ({ data: null })),
+      api.get("/me/worker/advances").catch(() => ({ data: [] })),
+      api.get("/me/worker/limits").catch(() => ({ data: null })),
+      api.get("/me/worker").catch(() => ({ data: null })),
     ]);
     setWages(w.data);
     setLoans(l.data);
+    setAdvances(a.data || []);
+    setLimits(lim.data);
+    setProfile(prof.data);
   }, []);
 
   useEffect(() => {
@@ -112,6 +162,43 @@ export default function WorkerWages() {
     };
   }, [load]);
 
+  // The mic only appears if the browser can genuinely listen. Recognition needs
+  // a SECURE CONTEXT, so on a phone at http://192.168.x.x it is unavailable —
+  // which is exactly the setup a field demo uses. Better to hide the control
+  // than to offer one that silently fails.
+  useEffect(() => onVoicesReady(() => setVoiceOk(voiceSupport().canListen)), []);
+
+  const startListening = () => {
+    setHeard("");
+    setListening(true);
+    listenOnce({
+      onResult: (alts) => {
+        if (heardLoan(alts)) {
+          setByVoice(true);
+          setLoanOpen(true);
+          setHeard("");
+        } else {
+          // Say what was heard, so a worker knows it listened and got the wrong
+          // word rather than wondering whether the button works at all.
+          setHeard(
+            `“${alts[0] || ""}” শুনলাম — বুঝতে পারিনি। “ঋণ” বলুন, অথবা নিচের বোতামে চাপ দিন।`,
+          );
+        }
+      },
+      onEnd: () => setListening(false),
+      onError: (code) => {
+        setListening(false);
+        const { text, permanent } = voiceErrorMessage(code);
+        setHeard(text);
+        // A browser that cannot do this will not start doing it. Hiding the
+        // button after the first definite failure is kinder than leaving a
+        // control that flashes and does nothing — which is exactly how this
+        // behaved in Brave before the failure could be detected at all.
+        if (permanent) setVoiceOk(false);
+      },
+    });
+  };
+
   if (loading) {
     return (
       <div className="grid h-64 place-items-center text-sm text-[#14493B]/60">
@@ -122,15 +209,98 @@ export default function WorkerWages() {
 
   const cur = wages?.current;
   const history = wages?.history || [];
+  // At most one open request at a time — the server enforces it, and showing
+  // the open one instead of the button is what makes that rule legible rather
+  // than a surprise 409.
+  const pending = advances.find((a) => a.status === "pending");
+  const decided = advances.filter((a) => a.status !== "pending");
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-[#14493B]">বেতন ও ঋণ</h1>
-        <p className="text-sm text-[#14493B]/60">
-          আপনার মজুরি কীভাবে হিসাব হলো, কত কাটা হয়েছে এবং হাতে কত পাবেন
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-extrabold text-[#14493B]">বেতন ও ঋণ</h1>
+          <p className="text-sm text-[#14493B]/60">
+            আপনার মজুরি কীভাবে হিসাব হলো, কত কাটা হয়েছে এবং হাতে কত পাবেন
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* ঋণের আবেদন, up here in the header.
+              The same action exists lower down inside the আপনার ঋণ card, but
+              that card sits below the wage breakdown and is off-screen on a
+              phone — a worker who opened this page to borrow had to scroll
+              past the thing they were not looking for to reach it.
+              Both open the SAME modal, so the block rule and the wording can
+              only be written once.
+
+              NOT hidden when a loan is outstanding. The modal explains the
+              block and says what they can do instead; a missing button would
+              leave someone wondering whether the feature exists at all. The
+              server refuses it independently either way. */}
+          {/* A payslip they can keep. CHA_GHOR_IDEA.md §1 — "there is no
+              payslip" — is the failure this whole screen answers, and a
+              printable copy is what a worker takes to somebody who reads. */}
+          <button
+            type="button"
+            onClick={() => setSlipOpen(true)}
+            disabled={!cur}
+            className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-[#14493B] ring-2 ring-[#14493B]/25 transition hover:bg-[#F4FFE9] disabled:opacity-40"
+          >
+            <LuPrinter size={17} /> বেতন স্লিপ
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLoanOpen(true)}
+            className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-[#14493B] ring-2 ring-[#14493B]/25 transition hover:bg-[#F4FFE9]"
+          >
+            <LuHandCoins size={17} /> ঋণের আবেদন
+          </button>
+
+          {/* Say "ঋণ" to open the same dialog.
+              Shown ONLY when the browser can actually listen — an unusable mic
+              button on a screen built for people who may not read is worse than
+              no button. Everything it does is also reachable by tapping, and
+              now by the button immediately to its left. */}
+          {voiceOk && (
+            <button
+              type="button"
+              onClick={startListening}
+              aria-label="কথা বলে ঋণের আবেদন করুন"
+              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition ${
+                listening
+                  ? "animate-pulse bg-rose-600 text-white"
+                  : "bg-[#14493B] text-white hover:brightness-110"
+              }`}
+            >
+              <LuMic size={18} />
+              {listening ? "শুনছি…" : "কথা বলুন"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* টাকা — moved here from the profile. This is the বেতন ও ঋণ page, and
+          it is the only place money can be taken, so the withdraw / advance /
+          loan distinction lives in one component instead of three screens.
+          The profile now shows only the payment card. */}
+      <MoneyActions onChanged={() => load().catch(() => {})} />
+
+      {/* Why a worked day paid nothing. */}
+      <DailyLedger />
+
+      {/* Why THIS MONTH differs from last month. Built and verified two
+          sessions ago and then never mounted — the endpoint existed, no screen
+          fetched it, so the feature did not exist as far as a worker was
+          concerned. It renders nothing when the components do not reconcile. */}
+      <PayChangePanel />
+
+      {heard && (
+        <p className="rounded-xl bg-white px-4 py-2.5 text-sm text-[#14493B] ring-1 ring-[#13483B]/15">
+          {heard}
+        </p>
+      )}
 
       {error && (
         <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-200">
@@ -231,9 +401,18 @@ export default function WorkerWages() {
                   আপনার ঋণ
                 </h2>
                 {!loans?.loans?.length ? (
-                  <p className="mt-3 text-sm text-[#14493B]/55">
-                    আপনার কোনো চলতি ঋণ নেই।
-                  </p>
+                  <>
+                    <p className="mt-3 text-sm text-[#14493B]/55">
+                      আপনার কোনো চলতি ঋণ নেই।
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setLoanOpen(true)}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#14493B] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
+                    >
+                      <LuHandCoins size={15} /> ঋণের আবেদন
+                    </button>
+                  </>
                 ) : (
                   <>
                     <p className="mt-2 text-3xl font-extrabold tabular-nums text-[#14493B]">
@@ -253,38 +432,119 @@ export default function WorkerWages() {
                             মোট {taka(l.principal)} · শোধ হয়েছে {taka(l.repaid)}
                           </p>
                           {Number(l.dailyDeduction) > 0 && (
-                            <p className="text-[11px] text-[#14493B]/55">
-                              প্রতিদিন {taka(l.dailyDeduction)} করে কাটা হচ্ছে
-                            </p>
+                            <>
+                              <p className="text-[11px] text-[#14493B]/55">
+                                প্রতিদিন {taka(l.dailyDeduction)} করে কাটা হচ্ছে
+                              </p>
+                              {/* WHEN IT ENDS. "৳1,860 outstanding" tells a
+                                  worker nothing about whether this ever
+                                  finishes; a number of days does.
+
+                                  কর্মদিবস — WORKING days, not calendar days,
+                                  and the distinction is real: a day not worked
+                                  deducts nothing, so the debt pauses rather
+                                  than running on a calendar. Promising a date
+                                  would be inventing one. */}
+                              <p className="mt-0.5 text-[11px] font-semibold text-[#14493B]/70">
+                                আর প্রায়{" "}
+                                {bn(
+                                  Math.ceil(
+                                    Number(l.outstanding) / Number(l.dailyDeduction),
+                                  ),
+                                )}{" "}
+                                কর্মদিবস কাটলে এই ঋণ শেষ হবে
+                              </p>
+                            </>
                           )}
                         </li>
                       ))}
                     </ul>
+                    {/* An unpaid loan blocks a new one. The button stays
+                        visible and says why — hiding it would leave a worker
+                        wondering whether the feature exists. The server
+                        enforces the same rule regardless. */}
+                    <button
+                      type="button"
+                      onClick={() => setLoanOpen(true)}
+                      title="আগের ঋণ শোধ হলে নতুন আবেদন করা যাবে"
+                      className="mt-4 inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-[#14493B]/30 px-4 py-2.5 text-sm font-bold text-white"
+                    >
+                      <LuHandCoins size={15} /> ঋণের আবেদন
+                    </button>
+                    <p className="mt-1.5 text-[10px] leading-snug text-[#14493B]/45">
+                      আগের ঋণ বাকি থাকায় নতুন ঋণ নেওয়া যাবে না। জরুরি প্রয়োজনে
+                      অগ্রিমের আবেদন করুন।
+                    </p>
                   </>
                 )}
               </div>
 
-              {/* Advance request. Points at the withdrawal flow, which already
-                  admits WORKER — not at the loan endpoints, which do not. */}
+              {/* Advances. Goes through /me/worker/advances, which takes the
+                  worker from the JWT — not /withdrawals, which reads workerId
+                  from the request body and would let a worker file against a
+                  colleague's wages. */}
               <div className={CARD}>
                 <h2 className="text-sm font-extrabold uppercase tracking-wide text-[#14493B]">
-                  অগ্রিম চাই
+                  অগ্রিম
                 </h2>
-                <p className="mt-2 text-xs text-[#14493B]/60">
-                  মাসের মাঝে টাকা দরকার হলে অগ্রিম চাইতে পারেন। অফিস অনুমোদন করলে
-                  সেটি পরের বেতন থেকে সমন্বয় হবে।
-                </p>
-                <button
-                  type="button"
-                  disabled
-                  title="পরের ধাপে যুক্ত হবে"
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#14493B] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
-                >
-                  <LuHandCoins size={15} /> অগ্রিমের আবেদন
-                </button>
-                <p className="mt-2 text-[10px] text-[#14493B]/40">
-                  এই বোতামটি এখনো কাজ করে না — পরের ধাপে যুক্ত হবে।
-                </p>
+
+                {pending ? (
+                  <>
+                    <p className="mt-2 text-xs text-[#14493B]/60">
+                      আপনার একটি আবেদন অফিসে বিবেচনাধীন আছে।
+                    </p>
+                    <div className="mt-3 rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-200">
+                      <p className="text-xl font-extrabold tabular-nums text-amber-900">
+                        {taka(pending.amount)}
+                      </p>
+                      <p className="text-[11px] text-amber-900/70">
+                        {dateBn(pending.requestedAt)} তারিখে পাঠানো · সিদ্ধান্তের
+                        অপেক্ষায়
+                      </p>
+                    </div>
+                    <p className="mt-2 text-[10px] text-[#14493B]/45">
+                      একসাথে একটির বেশি আবেদন করা যায় না — না হলে একই বেতন থেকে
+                      কয়েকবার কাটা পড়তে পারে।
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {/* No button here any more. Taking money happens in ONE
+                        place on this page — the টাকা block above — because that
+                        is the only place that knows the difference between
+                        withdrawing your own earned wages and borrowing an
+                        advance against days you have not worked. A second
+                        entry point here offered the advance without the
+                        no-pay-days warning attached to it. */}
+                    <p className="mt-2 text-xs text-[#14493B]/60">
+                      মাসের মাঝে টাকা দরকার হলে উপরের{" "}
+                      <b>টাকা</b> অংশ থেকে অগ্রিম চাইতে পারেন। অফিস অনুমোদন
+                      করলে সেটি পরের বেতন থেকে সমন্বয় হবে।
+                    </p>
+                  </>
+                )}
+
+                {/* Past requests, so an approved advance and the deduction that
+                    follows it can be tied together by the worker themselves. */}
+                {decided.length > 0 && (
+                  <ul className="mt-4 space-y-2 border-t border-[#13483B]/10 pt-3">
+                    {decided.slice(0, 4).map((a) => (
+                      <li key={a.id} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-[#14493B]/60">{dateBn(a.requestedAt)}</span>
+                        <span className="font-bold tabular-nums text-[#14493B]">
+                          {taka(a.amount)}
+                        </span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            ADVANCE_BN[a.status]?.tone || "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {ADVANCE_BN[a.status]?.label || a.status}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
@@ -342,6 +602,43 @@ export default function WorkerWages() {
           </div>
         </div>
       )}
+
+      <LoanRequestModal
+        open={loanOpen}
+        voice={byVoice}
+        // Passed so the modal can explain the block rather than only refusing.
+        // The server enforces it independently — a disabled button is a
+        // suggestion, not a rule.
+        blockedBy={Number(loans?.totalOutstanding || 0)}
+        onClose={() => {
+          setLoanOpen(false);
+          setByVoice(false);
+        }}
+        onDone={() => load().catch(() => {})}
+      />
+
+      {/* Kept for the voice flow and any other caller that still opens it by
+          setting advanceOpen. Same component the টাকা block uses, so the cap
+          and the no-pay-days warning can only be written once.
+          kind="advance": this entry point is explicitly borrowing. */}
+      <MyPayslip
+        open={slipOpen}
+        period={cur}
+        worker={profile}
+        onClose={() => setSlipOpen(false)}
+      />
+
+      <TakeMoneyModal
+        open={advanceOpen}
+        kind="advance"
+        max={Number(limits?.advanceAvailable || 0)}
+        avgDailyEarning={Number(limits?.averageDailyEarning || 0)}
+        onClose={() => setAdvanceOpen(false)}
+        onDone={() => {
+          setAdvanceOpen(false);
+          load().catch(() => {});
+        }}
+      />
     </div>
   );
 }

@@ -23,17 +23,21 @@ public record CaseDetailResponse(
         String resolvedAt,
         List<CaseReplyResponse> replies
 ) {
+    // Same suppression as CaseListItemResponse, and for the same reason: this is
+    // the single point where a FieldCase becomes visible, so the rule cannot be
+    // bypassed by adding a caller. See that class for the full reasoning.
     public static CaseDetailResponse from(FieldCase c, List<CaseReplyResponse> replies) {
+        boolean hide = c.isConfidential();
         return new CaseDetailResponse(
                 c.getId(),
                 c.getCaseType().name(),
                 c.getCategory(),
                 c.getTitle(),
                 c.getBody(),
-                c.getSubmitterName(),
-                c.getSubmitterRole(),
-                c.getWorkerCode(),
-                c.getZone(),
+                hide ? "গোপনীয় অভিযোগ" : c.getSubmitterName(),
+                hide ? null : c.getSubmitterRole(),
+                hide ? null : c.getWorkerCode(),
+                hide ? null : c.getZone(),
                 c.getPriority().name(),
                 c.getStatus().name(),
                 c.getEvidenceUrl(),

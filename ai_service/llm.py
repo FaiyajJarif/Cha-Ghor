@@ -52,6 +52,10 @@ ROUTES = {
     # the one place a stronger model earns its keep. Still defaults to local:
     # the supervisor reads and can edit every character before it sends.
     "sms_rewrite": os.getenv("ROUTE_SMS_REWRITE", "ollama"),
+    # A short note about somebody's debt. Local by default like everything
+    # worker-facing, so it cannot exhaust the Gemini quota, and because the
+    # figures are already computed -- the model only phrases them.
+    "loan_note": os.getenv("ROUTE_LOAN_NOTE", "ollama"),
     # anomaly detection reads real payroll / loan rows, so it defaults to the
     # LOCAL model for the same reason "answer" does -- row-level money data
     # should not leave the machine unless the operator opts in.

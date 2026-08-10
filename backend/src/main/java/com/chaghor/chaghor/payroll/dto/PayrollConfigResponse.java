@@ -9,5 +9,8 @@ public record PayrollConfigResponse(
         BigDecimal leafQuotaKg,
         BigDecimal surplusRate,
         BigDecimal gradeBonusRate,
+        BigDecimal advanceCap,
+        BigDecimal loanCap,
+        BigDecimal loanDailyDeduction,
         LocalDate effectiveFrom) {
 }

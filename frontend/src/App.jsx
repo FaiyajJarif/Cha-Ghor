@@ -20,7 +20,10 @@ import SupervisorWeather from "./pages/supervisor/SupervisorWeather";
 import SupervisorBroadcast from "./pages/supervisor/SupervisorBroadcast";
 import WorkerLayout from "./components/worker/WorkerLayout";
 import WorkerProfile from "./pages/worker/WorkerProfile";
+import WorkerNotices from "./pages/worker/WorkerNotices";
 import WorkerWages from "./pages/worker/WorkerWages";
+import WorkerReport from "./pages/worker/WorkerReport";
+import WorkerSettings from "./pages/worker/WorkerSettings";
 import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
@@ -114,7 +117,10 @@ export default function App() {
           {/* An index route, or /worker renders the shell around an empty
               middle — which is exactly what it did at first. */}
           <Route index element={<WorkerProfile />} />
+          <Route path="notices" element={<WorkerNotices />} />
           <Route path="wages" element={<WorkerWages />} />
+          <Route path="report" element={<WorkerReport />} />
+          <Route path="settings" element={<WorkerSettings />} />
         </Route>
       </Routes>
     </>

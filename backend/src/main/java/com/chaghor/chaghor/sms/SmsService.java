@@ -37,21 +37,38 @@ public class SmsService {
     private final SmsSender sender;
     private final SmsLogRepository logRepo;
     private final WorkerRepository workerRepository;
+    private final com.chaghor.chaghor.user.UserRepository userRepository;
     // Needed to turn a broadcast's field NAME into the zone id workers carry.
     private final ZoneRepository zoneRepository;
 
+    // EXPLICIT CONSTRUCTOR, no Lombok on this class. So a new final field is
+    // two edits, not one: the declaration AND a parameter plus assignment here.
+    // Adding only the field compiles nowhere -- "variable userRepository might
+    // not have been initialized" -- which is exactly what adding
+    // userRepository for the notification preferences did.
     public SmsService(SmsSender sender, SmsLogRepository logRepo,
-                      WorkerRepository workerRepository, ZoneRepository zoneRepository) {
+                      WorkerRepository workerRepository,
+                      com.chaghor.chaghor.user.UserRepository userRepository,
+                      ZoneRepository zoneRepository) {
         this.sender = sender;
         this.logRepo = logRepo;
         this.workerRepository = workerRepository;
+        this.userRepository = userRepository;
         this.zoneRepository = zoneRepository;
     }
 
     // Fired by PayrollService.markPaid(...) once a payslip goes approved -> paid.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    // IN BANGLA, because the recipient is a worker and the entire worker
+    // console is Bangla. This message used to read "Cha Ghor: Your salary of
+    // BDT 4,200 has been paid" -- English, to a Sylhet tea plucker, about the
+    // one subject where being unable to read it matters most.
+    //
+    // The amount stays in Western digits deliberately: a bKash confirmation SMS
+    // shows Western digits, and the two need to be comparable at a glance.
     public void notifyPayrollPaid(Long workerId, BigDecimal netPay) {
-        String msg = "Cha Ghor: Your salary of BDT " + money(netPay) + " has been paid. Thank you.";
+        String msg = "চা ঘর: আপনার বেতন " + money(netPay)
+                + " টাকা পরিশোধ করা হয়েছে। ধন্যবাদ।";
         dispatch(workerId, msg, SmsCategory.payroll);
     }
 
@@ -155,7 +172,45 @@ public class SmsService {
     }
 
     // ---- internals ----
+    // Does this worker still want SMS of this kind?
+    //
+    // THESE TOGGLES WERE DEAD. V3 added notify_broadcast / notify_attendance /
+    // notify_payroll, SettingsController wrote them, UserResponse returned
+    // them -- and nothing on the estate ever READ them. Every SMS went out
+    // regardless. Putting a switch on the worker's settings screen without
+    // this would have been a control that visibly moved and did nothing, on
+    // the one screen whose entire purpose is giving them control.
+    //
+    // Default TRUE, and true whenever the answer is unknown: an unlinked
+    // account or a missing user must not silently stop a wage notification.
+    // Silence is the failure mode that matters here, not an extra message.
+    private boolean wantsSms(Long workerId, SmsCategory category) {
+        if (workerId == null) return true;
+        try {
+            Long userId = workerRepository.findById(workerId)
+                    .map(com.chaghor.chaghor.worker.Worker::getUserId).orElse(null);
+            if (userId == null) return true;
+            var user = userRepository.findById(userId).orElse(null);
+            if (user == null) return true;
+            return switch (category) {
+                case payroll -> user.isNotifyPayroll();
+                // A loan or withdrawal decision is money moving on this
+                // worker's own request. It rides the payroll preference rather
+                // than getting a switch of its own -- there is no sensible
+                // reading of "tell me about my pay, but not about my advance".
+                case loan, withdrawal -> user.isNotifyPayroll();
+                case alert -> user.isNotifyBroadcast();
+            };
+        } catch (Exception e) {
+            // Never let a preference lookup swallow a notification.
+            return true;
+        }
+    }
+
     private void dispatch(Long workerId, String message, SmsCategory category) {
+        if (!wantsSms(workerId, category)) {
+            return;
+        }
         try {
             String phone = (workerId == null)
                     ? null

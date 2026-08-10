@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { LuInfo, LuCircleCheck, LuClock, LuCircleX } from "react-icons/lu";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LuInfo, LuCircleCheck, LuClock, LuCircleX, LuTrophy, LuBanknote } from "react-icons/lu";
+import WorkerAvatar from "../../components/worker/WorkerAvatar";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 
@@ -59,16 +62,26 @@ function Field({ label, value }) {
 export default function WorkerProfile() {
   const [me, setMe] = useState(null);
   const [today, setToday] = useState(null);
+  const [month, setMonth] = useState(null);
+
+  // "Fresh" is 7 days. Chosen, not computed: long enough that a worker who
+  // did not open the app the day he was paid still sees it, short enough that
+  // it is gone well before the next payslip.
+  const paidAt = month?.lastPayment?.paidAt;
+  const freshlyPaid =
+    !!paidAt && Date.now() - new Date(paidAt).getTime() < 7 * 24 * 60 * 60 * 1000;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [p, t] = await Promise.all([
+    const [p, t, m] = await Promise.all([
       api.get("/me/worker"),
       api.get("/me/worker/today").catch(() => ({ data: null })),
+      api.get("/me/worker/month").catch(() => ({ data: null })),
     ]);
     setMe(p.data);
     setToday(t.data);
+    setMonth(m.data);
   }, []);
 
   useEffect(() => {
@@ -81,6 +94,67 @@ export default function WorkerProfile() {
       alive = false;
     };
   }, [load]);
+
+  // Live on payroll.saved, pushed by PayrollService.markPaid.
+  //
+  // WITHOUT THIS the worker only learns he was paid by reloading on the
+  // off-chance: the SMS reaches his phone while the app in his hand keeps
+  // showing the old figure. attendance.saved and leaf.saved are here too so
+  // today's kilos and the month card move as the supervisor marks the register.
+  //
+  // loadRef, so this effect subscribes once and never re-subscribes when
+  // `load` is re-created — a socket that reconnects on every render is how you
+  // get a refetch storm.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        // Real kinds only, read from their push sites — there is no
+        // "payroll.updated" or "worker.saved".
+        if (
+          (kind === "payroll.saved" ||
+            kind === "attendance.saved" ||
+            kind === "leaf.saved") &&
+          loadRef.current
+        ) {
+          loadRef.current().catch(() => {});
+        }
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -120,17 +194,16 @@ export default function WorkerProfile() {
           </div>
           <div className="flex flex-wrap gap-6 p-5">
             <div className="text-center">
-              {me?.photoUrl ? (
-                <img
-                  src={me.photoUrl.replace(/^\/api\/v1/, "")}
-                  alt=""
-                  className="h-28 w-28 rounded-full object-cover ring-4 ring-[#8FD05A]"
-                />
-              ) : (
-                <span className="grid h-28 w-28 place-items-center rounded-full bg-[#14493B] text-3xl font-extrabold text-white">
-                  {name.slice(0, 1)}
-                </span>
-              )}
+              {/* Was a bare <img src>, which would have 401'd the moment a
+                  photo actually existed: attachments are authenticated and an
+                  img tag sends no token. It never showed because nothing could
+                  upload a photo until now. */}
+              <WorkerAvatar
+                src={me?.photoUrl}
+                name={name}
+                size={112}
+                className="text-3xl ring-4 ring-[#8FD05A]"
+              />
               <p className="mt-3 text-sm font-extrabold text-[#14493B]">{name}</p>
               <p className="text-xs text-[#14493B]/55">কর্মী আইডি: {me?.code}</p>
             </div>
@@ -170,6 +243,117 @@ export default function WorkerProfile() {
               <LuInfo size={13} className="mt-0.5 shrink-0" />
               ক্ষেত্র বদলাতে হলে আপনার সুপারভাইজারকে জানান।
             </p>
+          </div>
+        </div>
+      </div>
+
+      {/* This month, and the last time they were actually paid.
+          Replaces the mockup's compliance card — PPE %, safety score,
+          "450 accident-free days" — none of which any table records. Every
+          figure below comes from the same registers the payslip is built from,
+          so it can be checked against the wages screen and will agree. */}
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className={`${CARD} overflow-hidden lg:col-span-2`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-[#C0F28B] px-5 py-3">
+            <h2 className="font-bold text-[#14493B]">এই মাসে আপনি</h2>
+            <span className="text-xs font-semibold text-[#14493B]/70">
+              {MONTHS_BN[new Date().getMonth()]}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+            <div>
+              <p className="text-[11px] font-semibold text-[#14493B]/50">কাজ করেছেন</p>
+              <p className="text-2xl font-extrabold text-[#14493B]">
+                {bn(month?.workedDays ?? 0)}{" "}
+                <span className="text-sm font-bold text-[#14493B]/45">দিন</span>
+              </p>
+              {month?.lateDays > 0 && (
+                <p className="text-[11px] text-amber-700">
+                  {bn(month.lateDays)} দিন দেরিতে
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold text-[#14493B]/50">মোট পাতা</p>
+              <p className="text-2xl font-extrabold text-[#14493B]">
+                {bn(Number(month?.totalKg ?? 0).toFixed(1))}{" "}
+                <span className="text-sm font-bold text-[#14493B]/45">কেজি</span>
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold text-[#14493B]/50">দিনে গড়ে</p>
+              <p className="text-2xl font-extrabold text-[#14493B]">
+                {bn(Number(month?.avgKgPerPickingDay ?? 0).toFixed(1))}{" "}
+                <span className="text-sm font-bold text-[#14493B]/45">কেজি</span>
+              </p>
+              {/* Per day picked, not per calendar day — dividing by the month
+                  would make someone who worked three weeks look lazy. */}
+              <p className="text-[11px] text-[#14493B]/40">যেদিন পাতা তুলেছেন</p>
+            </div>
+            <div>
+              <p className="flex items-center gap-1 text-[11px] font-semibold text-[#14493B]/50">
+                <LuTrophy size={11} /> সেরা দিন
+              </p>
+              {month?.bestKg ? (
+                <>
+                  <p className="text-2xl font-extrabold text-emerald-700">
+                    {bn(Number(month.bestKg).toFixed(1))}{" "}
+                    <span className="text-sm font-bold text-emerald-700/50">কেজি</span>
+                  </p>
+                  <p className="text-[11px] text-[#14493B]/40">{dateBn(month.bestDay)}</p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-[#14493B]/35">এখনো নেই</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Last payment.
+            FRESH (within 7 days) it is the loud "বেতন এসেছে" card; after that
+            it settles back into the quiet version. A celebration that never
+            goes away stops meaning anything, and a worker paid every month
+            would otherwise see it permanently. */}
+        <div
+          className={`${CARD} overflow-hidden ${
+            freshlyPaid ? "ring-2 ring-emerald-600" : ""
+          }`}
+        >
+          <div
+            className={`px-5 py-3 ${
+              freshlyPaid ? "bg-emerald-600" : "bg-[#C0F28B]"
+            }`}
+          >
+            <h2
+              className={`flex items-center gap-2 font-bold ${
+                freshlyPaid ? "text-white" : "text-[#14493B]"
+              }`}
+            >
+              {freshlyPaid && <LuCircleCheck size={17} />}
+              {freshlyPaid ? "বেতন এসেছে" : "সর্বশেষ পরিশোধ"}
+            </h2>
+          </div>
+          <div className="p-5">
+            {month?.lastPayment ? (
+              <>
+                <p className="text-3xl font-extrabold text-[#14493B]">
+                  {taka(month.lastPayment.amount)}
+                </p>
+                <p className="mt-1 text-xs text-[#14493B]/55">
+                  {dateBn(month.lastPayment.paidAt)} তারিখে দেওয়া হয়েছে
+                </p>
+                <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F4FFE9] px-3 py-2 text-[11px] text-[#14493B]/65">
+                  <LuBanknote size={13} className="mt-0.5 shrink-0" />
+                  কীভাবে এই হিসাব হলো দেখতে &ldquo;বেতন ও ঋণ&rdquo; পাতায় যান।
+                </p>
+              </>
+            ) : (
+              /* Not "৳0". A worker who has not been paid yet and a worker paid
+                 nothing are different situations. */
+              <p className="text-sm text-[#14493B]/50">
+                এখনো কোনো বেতন পরিশোধ হয়নি।
+              </p>
+            )}
           </div>
         </div>
       </div>

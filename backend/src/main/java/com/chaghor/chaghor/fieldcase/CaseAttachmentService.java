@@ -35,7 +35,15 @@ import java.util.regex.Pattern;
 //     touching the filesystem, and the resolved path is confirmed to still be
 //     inside the upload directory.
 //
-// Video is deliberately not accepted yet: the multipart cap is 10MB, which most
+// AUDIO IS ACCEPTED so a worker who cannot write can say what happened instead.
+// Which container arrives depends entirely on the browser -- Chrome and Brave
+// record audio/webm, Safari audio/mp4, Firefox audio/ogg -- so all three are on
+// the list. They are stored and served untouched; nothing here transcodes.
+//
+// The 10MB cap still applies, which at the ~24kbps Opus a phone produces is
+// roughly an hour. The recorder in the UI stops at two minutes anyway.
+//
+// Video is deliberately not accepted: the multipart cap is 10MB, which most
 // phone video exceeds within seconds, and there is no transcoding here.
 @Service
 public class CaseAttachmentService {
@@ -45,11 +53,18 @@ public class CaseAttachmentService {
             "image/png", "png",
             "image/jpeg", "jpg",
             "image/webp", "webp",
-            "application/pdf", "pdf");
+            "application/pdf", "pdf",
+            // MediaRecorder appends codec parameters -- "audio/webm;codecs=opus"
+            // -- so the declared type is stripped at the semicolon before this
+            // lookup. Without that every recording is rejected as unknown.
+            "audio/webm", "weba",
+            "audio/mp4", "m4a",
+            "audio/ogg", "oga");
 
     // Only ever read a name that looks exactly like something we wrote.
     private static final Pattern STORED_NAME =
-            Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(png|jpg|webp|pdf)$");
+            Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                            + "\\.(png|jpg|webp|pdf|weba|m4a|oga)$");
 
     private static final long MAX_BYTES = 10L * 1024 * 1024; // matches spring.servlet.multipart
 
@@ -69,10 +84,17 @@ public class CaseAttachmentService {
         }
         String declared = file.getContentType() == null
                 ? "" : file.getContentType().toLowerCase().trim();
+        // "audio/webm;codecs=opus" -> "audio/webm". MediaRecorder always sends
+        // the codec parameter; the allow-list is keyed on the bare type.
+        int semi = declared.indexOf(';');
+        if (semi >= 0) {
+            declared = declared.substring(0, semi).trim();
+        }
         String ext = ALLOWED.get(declared);
         if (ext == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Only PNG, JPG, WEBP images and PDF files can be attached.");
+                    "Only PNG, JPG, WEBP images, PDF files and voice recordings "
+                            + "can be attached.");
         }
 
         byte[] head = new byte[12];
@@ -85,7 +107,7 @@ public class CaseAttachmentService {
         if (!looksLike(declared, head, read)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "That file does not look like a real " + ext.toUpperCase()
-                            + ". Please attach the original photo or PDF.");
+                            + ". Please attach the original file.");
         }
 
         String storedName = UUID.randomUUID() + "." + ext;
@@ -122,6 +144,9 @@ public class CaseAttachmentService {
             case "jpg" -> "image/jpeg";
             case "webp" -> "image/webp";
             case "pdf" -> "application/pdf";
+            case "weba" -> "audio/webm";
+            case "m4a" -> "audio/mp4";
+            case "oga" -> "audio/ogg";
             default -> "application/octet-stream";
         };
     }
@@ -155,6 +180,14 @@ public class CaseAttachmentService {
                     && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P';
             // %PDF
             case "application/pdf" -> b[0] == '%' && b[1] == 'P' && b[2] == 'D' && b[3] == 'F';
+            // WebM is Matroska: EBML header 1A 45 DF A3.
+            case "audio/webm" -> (b[0] & 0xFF) == 0x1A && (b[1] & 0xFF) == 0x45
+                    && (b[2] & 0xFF) == 0xDF && (b[3] & 0xFF) == 0xA3;
+            // ISO-BMFF: a size field, then 'ftyp' at offset 4. The first four
+            // bytes are the box length, so they cannot be checked.
+            case "audio/mp4" -> read >= 8 && b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p';
+            // Ogg page header 'OggS'.
+            case "audio/ogg" -> b[0] == 'O' && b[1] == 'g' && b[2] == 'g' && b[3] == 'S';
             default -> false;
         };
     }

@@ -11,6 +11,8 @@ public record WithdrawalResponse(
         BigDecimal amount,
         String method,
         String status,
+        // "salary" (wages released early) or "advance" (a debt). V33.
+        String kind,
         OffsetDateTime requestedAt,
         OffsetDateTime processedAt
 ) {}

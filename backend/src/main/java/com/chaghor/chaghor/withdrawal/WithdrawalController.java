@@ -24,9 +24,27 @@ public class WithdrawalController {
         return service.list(status);
     }
 
-    // A worker (or an admin on their behalf) files a cash-out request.
+    // An admin or supervisor files a cash-out request ON BEHALF OF a worker.
+    //
+    // WORKER WAS REMOVED FROM THIS ENDPOINT, DELIBERATELY. DO NOT PUT IT BACK.
+    //
+    // `workerId` comes from the request body, which is correct for an office
+    // user -- they are entitled to act for any worker, and the body is the only
+    // way to say which. It is a hole for a worker: passing a colleague's id
+    // files an advance against THAT colleague's wages, and the recovery lands
+    // on their payslip. The victim's pay drops and nothing on their screen
+    // explains why.
+    //
+    // Workers use POST /api/v1/me/worker/advances instead, which takes no id at
+    // all -- it resolves the worker from the JWT and additionally enforces the
+    // advance cap and the one-open-request rule. See MeWorkerController's header
+    // for why that tier has no id parameters anywhere.
+    //
+    // Nothing in the frontend called this as a worker; the worker UI has always
+    // used the /me/worker path. Removing the role closes the gap without
+    // changing any behaviour that was in use.
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','WORKER')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public WithdrawalResponse create(@Valid @RequestBody NewWithdrawalRequest req) {
         return service.create(req);
     }
