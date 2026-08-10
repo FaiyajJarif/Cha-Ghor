@@ -44,6 +44,15 @@ public class SmsLog {
     @Column(name = "provider", length = 60)
     private String provider;
 
+    // The broadcast this message came from (V30). Null for payroll and
+    // withdrawal notices, which are not broadcasts and never will be.
+    //
+    // Deliberately a plain Long with no FK: sms_log is an append-only delivery
+    // record, and the evidence that a message reached somebody's phone should
+    // outlive the case that prompted it.
+    @Column(name = "case_id")
+    private Long caseId;
+
     // DB default now(); let Postgres stamp it.
     @Column(name = "sent_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime sentAt;

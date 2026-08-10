@@ -24,13 +24,50 @@ public class FieldCaseController {
     private final FieldCaseService service;
     private final CaseAttachmentService attachments;
     private final CaseReviewService review;
+    private final BroadcastSmsService broadcastSms;
 
     public FieldCaseController(FieldCaseService service,
                                CaseAttachmentService attachments,
-                               CaseReviewService review) {
+                               CaseReviewService review,
+                               BroadcastSmsService broadcastSms) {
         this.service = service;
         this.attachments = attachments;
         this.review = review;
+        this.broadcastSms = broadcastSms;
+    }
+
+    // ---- broadcasting to workers' phones -----------------------------------
+    //
+    // Three endpoints, deliberately separate, because a model must never be one
+    // request away from putting words on somebody's phone:
+    //
+    //   GET  /sms-preview   how many people this would reach. Sends nothing.
+    //   POST /sms-rewrite   shorten into Bangla. Sends nothing.
+    //   POST /{id}/sms      send exactly these characters. Asks no model.
+    //
+    // Supervisors can do all three: a weather alert that has to wait for the
+    // office is not an alert. The send is guarded against a repeat, because
+    // texting forty workers twice costs money and credibility.
+
+    @GetMapping("/sms-preview")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public Map<String, Object> smsPreview(@RequestParam(required = false) String zone) {
+        return broadcastSms.preview(zone);
+    }
+
+    @PostMapping("/sms-rewrite")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public Map<String, Object> smsRewrite(@RequestBody Map<String, String> body) {
+        return broadcastSms.rewrite(
+                body.get("title"), body.get("body"), body.get("priority"),
+                body.get("zone"), body.getOrDefault("language", "bn"));
+    }
+
+    @PostMapping("/{id}/sms")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public Map<String, Object> sendSms(@PathVariable Long id,
+                                       @RequestBody Map<String, String> body) {
+        return broadcastSms.send(id, body == null ? null : body.get("message"));
     }
 
     // AI review of one case: suggested category and priority, whether it looks

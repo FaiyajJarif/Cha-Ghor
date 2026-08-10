@@ -33,10 +33,23 @@ import java.util.List;
 // The estate is in Sylhet; coordinates are configurable in application.yaml.
 //
 // DESIGN NOTE: reads NEVER call the API. `current()` and `trend()` only read
-// weather_log. Fetching is a separate explicit action (refresh(), also driven
-// by a schedule), so opening the dashboard can never hang on somebody else's
-// server being slow, and a failed fetch degrades to the last good reading
-// rather than an error page.
+// weather_log. Fetching is a separate explicit action -- refresh(), driven by
+// the Refresh button and by scheduledRefresh() below -- so opening the
+// dashboard can never hang on somebody else's server being slow, and a failed
+// fetch degrades to the last good reading rather than an error page.
+//
+// THE SCHEDULE IS NEW, AND ITS ABSENCE WAS A REAL BUG. This comment previously
+// claimed refresh() was "also driven by a schedule" when nothing scheduled it:
+// the only trigger was a human pressing Refresh. That is worse than it sounds,
+// because four things read weather_log and none of them can tell how old it is:
+//
+//   * the harvest recommendation on the Weather screen
+//   * LeafCollectionService.forecast()   -- the rain factor
+//   * PluckAdvisorService                -- the weather note
+//   * ZoneService.suggestCondition()     -- rain softening a poor-yield call
+//
+// On an estate where nobody happened to press the button, all four were quietly
+// reasoning from a stale reading, or from none.
 @Service
 public class WeatherService {
 
@@ -48,15 +61,18 @@ public class WeatherService {
             .connectTimeout(Duration.ofSeconds(8))
             .build();
 
+    private final com.chaghor.chaghor.notification.NotificationService notifications;
     private final double latitude;
     private final double longitude;
     private final boolean enabled;
 
     public WeatherService(WeatherLogRepository repo,
+                          com.chaghor.chaghor.notification.NotificationService notifications,
                           @Value("${app.weather.latitude:24.8949}") double latitude,
                           @Value("${app.weather.longitude:91.8687}") double longitude,
                           @Value("${app.weather.enabled:true}") boolean enabled) {
         this.repo = repo;
+        this.notifications = notifications;
         this.latitude = latitude;
         this.longitude = longitude;
         this.enabled = enabled;
@@ -280,6 +296,31 @@ public class WeatherService {
 
     // ---- fetch -------------------------------------------------------------
 
+    // Keep the reading current without anyone pressing a button.
+    //
+    // Hourly by default. Open-Meteo is free, needs no key and publishes no
+    // per-hour rate limit at this volume -- 24 calls a day for one coordinate
+    // is nothing -- so the cost of being fresh is effectively zero, while the
+    // cost of being stale is four features silently reasoning from old numbers.
+    //
+    // Set app.weather.refresh-cron to change it, or app.weather.enabled=false
+    // to stop fetching entirely (refresh() already honours that flag and simply
+    // returns the last stored reading).
+    //
+    // Deliberately swallows everything: a scheduled task that throws gets
+    // logged by Spring and, more importantly, this must never become a reason
+    // the application looks broken. A missed hour is invisible; the next one
+    // fixes it.
+    @Scheduled(cron = "${app.weather.refresh-cron:0 5 * * * *}")
+    public void scheduledRefresh() {
+        if (!enabled) return;
+        try {
+            refresh();
+        } catch (Exception e) {
+            log.warn("Scheduled weather refresh failed: {}", e.toString());
+        }
+    }
+
     // Pull current conditions + a 3-day forecast and store one row.
     // Returns the stored reading, or the last good one if the fetch failed --
     // weather is never important enough to fail a page over.
@@ -334,6 +375,17 @@ public class WeatherService {
                     .source("open-meteo")
                     .forecastJson(mapper.writeValueAsString(extra))
                     .build());
+
+            // Tell open consoles a new reading landed, so a hourly scheduled
+            // fetch shows up on a screen someone left open rather than sitting
+            // in the table unseen. Only on a SUCCESSFUL fetch -- a failed one
+            // stored nothing and there is nothing to look at.
+            try {
+                notifications.send("Weather updated",
+                        "A new reading was recorded.", "weather.saved", null);
+            } catch (Exception ignored) {
+                // The reading is saved. A dropped frame must not undo it.
+            }
         } catch (Exception e) {
             // Includes no internet, DNS failure and timeouts. Degrade to the
             // last stored reading rather than surfacing an error.

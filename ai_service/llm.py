@@ -43,6 +43,15 @@ ROUTES = {
     # Fields board never spends the Gemini free-tier quota that the leaf photo
     # work actually needs.
     "pluck_advice": os.getenv("ROUTE_PLUCK_ADVICE", "ollama"),
+    # A few sentences over one small reading. No vision, no SQL, nothing that
+    # needs a frontier model -- and it can be asked for repeatedly through a
+    # day, so it stays local rather than eating the Gemini free tier the leaf
+    # photo work actually needs.
+    "weather_brief": os.getenv("ROUTE_WEATHER_BRIEF", "ollama"),
+    # One short sentence, but it is going to real phones in Bangla, so this is
+    # the one place a stronger model earns its keep. Still defaults to local:
+    # the supervisor reads and can edit every character before it sends.
+    "sms_rewrite": os.getenv("ROUTE_SMS_REWRITE", "ollama"),
     # anomaly detection reads real payroll / loan rows, so it defaults to the
     # LOCAL model for the same reason "answer" does -- row-level money data
     # should not leave the machine unless the operator opts in.

@@ -51,6 +51,14 @@ app:
     latitude: ${APP_WEATHER_LAT:24.8949}
     longitude: ${APP_WEATHER_LON:91.8687}
     enabled: ${APP_WEATHER_ENABLED:true}
+    # Fetch a fresh reading every hour, at five past.
+    #
+    # Until this existed the ONLY trigger was a supervisor pressing Refresh, so
+    # the harvest advice, the yield forecast's rain factor, the pluck advisor's
+    # weather note and the field-condition suggestion could all be working from
+    # a reading days old without saying so. Open-Meteo is free and keyless, so
+    # 24 calls a day costs nothing.
+    refresh-cron: ${APP_WEATHER_REFRESH_CRON:0 5 * * * *}
     # Daily retention pass, 03:30. Readings are NEVER deleted -- this only drops
     # the hourly/7-day prediction arrays off blobs from before today, which are
     # 96% of a row's size and are forecasts about a day that has already

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -35,7 +35,11 @@ import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { BTN_GHOST } from "../../lib/ui";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 import InfoTip from "../../components/admin/InfoTip";
+import RainImpactPanel from "../../components/supervisor/RainImpactPanel";
+import WeatherBriefPanel from "../../components/supervisor/WeatherBriefPanel";
 import ErrorBoundary from "../../components/ErrorBoundary";
 
 // Weather Monitor.
@@ -156,6 +160,7 @@ export default function SupervisorWeather() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [page, setPage] = useState(0);
+  const [live, setLive] = useState(false);
 
   const load = useCallback(async () => {
     const [c, t, e] = await Promise.all([
@@ -181,6 +186,58 @@ export default function SupervisorWeather() {
     };
   }, [load]);
 
+  // Live updates.
+  //
+  // Readings are now fetched hourly by a scheduled job on the server, so a
+  // screen left open would otherwise drift further out of date the longer it
+  // sat there — the opposite of what a monitor is for. The frame carries no
+  // data, only a nudge to refetch.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onopen = () => setLive(true);
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        if (kind === "weather.saved" && loadRef.current) {
+          loadRef.current().catch(() => {});
+        }
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        setLive(false);
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
+
   const refresh = async () => {
     setRefreshing(true);
     setError("");
@@ -194,6 +251,17 @@ export default function SupervisorWeather() {
       setRefreshing(false);
     }
   };
+
+  // How old the reading is, in whole hours. Null when there is no reading or
+  // the timestamp cannot be parsed — an unknown age must not be reported as
+  // zero, which would read as "just now".
+  const staleHours = useMemo(() => {
+    const t = weather?.observedAt;
+    if (!t) return null;
+    const ms = Date.parse(t);
+    if (Number.isNaN(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 3600000));
+  }, [weather?.observedAt]);
 
   const available = weather?.available;
   const hourly = weather?.hourly || [];
@@ -257,8 +325,29 @@ export default function SupervisorWeather() {
       lines.push({ ok: true, text: "No wet hour in the forecast window." });
     }
 
-    if (temp !== null && temp >= 35) {
-      lines.push({ ok: false, text: `${temp}°C — rotate breaks and water rounds.` });
+    // HEAT IS JUDGED ON FEELS-LIKE, NOT THE THERMOMETER.
+    //
+    // Heat stress depends on humidity as much as temperature: 33°C at 95%
+    // humidity is harder on a plucker than 36°C in dry air, because sweat stops
+    // evaporating. This rule used to read tempC while apparent_temperature was
+    // already being fetched, stored and displayed two cards above — so on a
+    // muggy Sylhet afternoon it stayed silent exactly when it mattered most.
+    //
+    // Falls back to the dry-bulb reading when feels-like is missing (older rows
+    // predate that field), and names which one it used so nobody is comparing
+    // it against the wrong number on screen.
+    const feels = weather.feelsLikeC === null || weather.feelsLikeC === undefined
+      ? null
+      : Number(weather.feelsLikeC);
+    const heat = feels ?? temp;
+    if (heat !== null && heat >= 35) {
+      lines.push({
+        ok: false,
+        text:
+          feels !== null
+            ? `Feels like ${feels}°C — rotate breaks and water rounds.`
+            : `${temp}°C — rotate breaks and water rounds.`,
+      });
     }
     if (hum !== null && hum >= 90) {
       lines.push({
@@ -360,7 +449,24 @@ export default function SupervisorWeather() {
             Helps monitor detailed weather information
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            title={
+              live
+                ? "Connected. New readings appear here as they are recorded."
+                : "Not connected. The reading below is correct but will not update on its own."
+            }
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+              live ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                live ? "animate-pulse bg-emerald-500" : "bg-slate-400"
+              }`}
+            />
+            {live ? "Live" : "Offline"}
+          </span>
           {available && weather.observedAt ? (
             <span className="text-xs text-cg-ink/50">
               Reading taken {stamp(weather.observedAt)}
@@ -405,6 +511,28 @@ export default function SupervisorWeather() {
               "No weather reading yet. Press Refresh to fetch the current conditions."}
           </Empty>
         </div>
+      )}
+
+      {/* A stale reading is more dangerous than no reading, because everything
+          on this page — and the yield forecast, the pluck advisor and the
+          field-condition suggestion elsewhere — treats it as current. The
+          server now fetches hourly, so anything this old means the scheduled
+          job is not running or the estate has been offline. */}
+      {available && staleHours != null && staleHours >= 3 && (
+        <p className="flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
+          <LuTriangleAlert size={16} className="shrink-0" />
+          This reading is about {staleHours} hours old. Readings are meant to
+          arrive hourly, so the scheduled fetch may not be running — the advice
+          below, and the yield forecast, are working from it either way.
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={refreshing}
+            className="ml-auto rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-amber-900 ring-1 ring-amber-300 disabled:opacity-50"
+          >
+            {refreshing ? "Fetching…" : "Fetch now"}
+          </button>
+        </p>
       )}
 
       {/* KPI row */}
@@ -704,6 +832,14 @@ export default function SupervisorWeather() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* The two AI-adjacent panels, in the order they should be read:
+          the measurement first, then the words. Both sit above the rule-based
+          harvest recommendation, which remains the thing to act on. */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <RainImpactPanel />
+        <WeatherBriefPanel available={available} />
       </div>
 
       {/* Recommendation + actions */}

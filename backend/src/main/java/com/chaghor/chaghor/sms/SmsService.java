@@ -2,12 +2,16 @@ package com.chaghor.chaghor.sms;
 
 import com.chaghor.chaghor.worker.Worker;
 import com.chaghor.chaghor.worker.WorkerRepository;
+import com.chaghor.chaghor.zone.ZoneRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
@@ -33,11 +37,15 @@ public class SmsService {
     private final SmsSender sender;
     private final SmsLogRepository logRepo;
     private final WorkerRepository workerRepository;
+    // Needed to turn a broadcast's field NAME into the zone id workers carry.
+    private final ZoneRepository zoneRepository;
 
-    public SmsService(SmsSender sender, SmsLogRepository logRepo, WorkerRepository workerRepository) {
+    public SmsService(SmsSender sender, SmsLogRepository logRepo,
+                      WorkerRepository workerRepository, ZoneRepository zoneRepository) {
         this.sender = sender;
         this.logRepo = logRepo;
         this.workerRepository = workerRepository;
+        this.zoneRepository = zoneRepository;
     }
 
     // Fired by PayrollService.markPaid(...) once a payslip goes approved -> paid.
@@ -55,6 +63,95 @@ public class SmsService {
         String outcome = paid ? "approved and paid" : "rejected";
         String msg = "Cha Ghor: Your bKash withdrawal of BDT " + money(amount) + " was " + outcome + ".";
         dispatch(workerId, msg, SmsCategory.withdrawal);
+    }
+
+    // ---- field alerts (broadcasts) -----------------------------------------
+
+    // Who a broadcast would reach: active workers who have a phone number, in
+    // the named field if one was given, estate-wide otherwise.
+    //
+    // A worker with no phone on file is EXCLUDED rather than counted and
+    // failed. The number shown on the confirm screen has to mean "this many
+    // people will get a text", not "this many rows will appear in the log".
+    @Transactional(readOnly = true)
+    public List<Worker> alertRecipients(String zoneName) {
+        Long zoneId = null;
+        if (zoneName != null && !zoneName.isBlank()) {
+            zoneId = zoneRepository.findAll().stream()
+                    .filter(z -> z.getArchivedAt() == null)
+                    .filter(z -> zoneName.trim().equalsIgnoreCase(z.getName())
+                            || zoneName.trim().equalsIgnoreCase(z.getCode()))
+                    .map(z -> z.getId())
+                    .findFirst()
+                    .orElse(null);
+            // A zone name that matches nothing must NOT silently fall through
+            // to "everyone". Texting the whole estate because of a typo is the
+            // exact mistake the confirm step exists to prevent.
+            if (zoneId == null) return List.of();
+        }
+        final Long zid = zoneId;
+        return workerRepository.findAll().stream()
+                .filter(w -> "active".equalsIgnoreCase(String.valueOf(w.getStatus())))
+                .filter(w -> w.getPhone() != null && !w.getPhone().isBlank())
+                .filter(w -> zid == null || zid.equals(w.getZoneId()))
+                .toList();
+    }
+
+    // Send a field alert to those recipients and record every attempt.
+    //
+    // NOT best-effort like the payroll notices. Those ride along with a money
+    // transition that must not be rolled back by a texting problem; this IS the
+    // action the supervisor asked for, so if it cannot happen they need to be
+    // told rather than shown a success screen.
+    //
+    // Guarded on caseId: a broadcast that has already been sent is refused.
+    // The other callers get idempotency free from their single-shot state
+    // transitions (approved -> paid). A broadcast has no such transition, so a
+    // double-tap on Send during a storm would otherwise text everyone twice.
+    @Transactional
+    public Map<String, Object> broadcastAlert(Long caseId, String zoneName, String message) {
+        if (caseId == null) {
+            throw new IllegalArgumentException("A broadcast must be attached to a case.");
+        }
+        if (message == null || message.isBlank()) {
+            throw new IllegalArgumentException("There is no message to send.");
+        }
+        if (logRepo.countByCaseId(caseId) > 0) {
+            throw new IllegalStateException("This broadcast has already been sent as SMS.");
+        }
+
+        List<Worker> recipients = alertRecipients(zoneName);
+        int sent = 0;
+        int failed = 0;
+
+        for (Worker w : recipients) {
+            SmsSendResult result;
+            try {
+                result = sender.send(w.getPhone(), message);
+            } catch (Exception e) {
+                result = SmsSendResult.failed(e.getMessage());
+            }
+            // One log row per recipient, whatever happened. A failure that
+            // leaves no trace is indistinguishable from a message nobody sent.
+            logRepo.save(SmsLog.builder()
+                    .workerId(w.getId())
+                    .phone(w.getPhone())
+                    .message(message)
+                    .category(SmsCategory.alert)
+                    .status(result.status())
+                    .provider(sender.providerName())
+                    .caseId(caseId)
+                    .build());
+            if (result.status() == SmsStatus.failed) failed++;
+            else sent++;
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("attempted", recipients.size());
+        out.put("sent", sent);
+        out.put("failed", failed);
+        out.put("provider", sender.providerName());
+        return out;
     }
 
     // ---- internals ----

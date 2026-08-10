@@ -22,9 +22,15 @@ import java.util.List;
 public class WeatherController {
 
     private final WeatherService service;
+    private final RainImpactService rainImpactService;
+    private final WeatherBriefService weatherBriefService;
 
-    public WeatherController(WeatherService service) {
+    public WeatherController(WeatherService service,
+                             RainImpactService rainImpactService,
+                             WeatherBriefService weatherBriefService) {
         this.service = service;
+        this.rainImpactService = rainImpactService;
+        this.weatherBriefService = weatherBriefService;
     }
 
     @GetMapping("/current")
@@ -49,6 +55,30 @@ public class WeatherController {
 
     // Pull a fresh reading now. Safe to call repeatedly: a failed fetch returns
     // the last stored reading instead of an error.
+    // What rain actually costs this estate, measured from its own weigh-ins and
+    // registers rather than assumed. Returns enoughData=false, and refuses to
+    // give a figure, until there are enough matched wet and dry days.
+    @GetMapping("/rain-impact")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public com.chaghor.chaghor.weather.dto.RainImpact rainImpact() {
+        return rainImpactService.measure();
+    }
+
+    // A written note over today's numbers.
+    //
+    // Deliberately NOT part of /current: it costs a model call, so it happens
+    // when a supervisor asks for it rather than every time the page loads. The
+    // response carries `error` instead of failing when ai_service is down, and
+    // the rest of the screen is unaffected either way.
+    // `lang=bn` writes it in Bangla. Defaults to English so an older client
+    // that does not send the parameter keeps working unchanged.
+    @GetMapping("/brief")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public java.util.Map<String, Object> brief(
+            @RequestParam(name = "lang", required = false, defaultValue = "en") String lang) {
+        return weatherBriefService.brief(lang);
+    }
+
     @PostMapping("/refresh")
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public WeatherResponse refresh() {

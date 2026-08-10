@@ -53,6 +53,24 @@ class ReportRequest(BaseModel):
     period_label: Optional[str] = None
 
 
+class SmsRewriteRequest(BaseModel):
+    title: Optional[str] = None
+    body: str = ""
+    priority: Optional[str] = None
+    zone: Optional[str] = None
+    language: Optional[str] = "bn"
+
+
+class WeatherBriefRequest(BaseModel):
+    reading: dict = {}
+    forecast: list = []
+    rain_impact: Optional[dict] = None
+    # "bn" for Bangla, anything else for English. Most supervisors on a Sylhet
+    # estate read Bangla far more comfortably than English, and a weather note
+    # nobody reads is worth nothing.
+    language: Optional[str] = "en"
+
+
 class PluckAdviceRequest(BaseModel):
     cycle_days: int = 8
     weather_note: Optional[str] = None
@@ -203,6 +221,153 @@ def report_endpoint(req: ReportRequest):
         raise HTTPException(status_code=502, detail="Model returned an empty report")
     return {"summary": summary, "provider": provider}
 
+
+
+# --- broadcast -> SMS rewrite -------------------------------------------------
+#
+# A supervisor types a field report in a hurry, often in English or half
+# English, at whatever length the box allows. The people it needs to reach are
+# pluckers holding basic phones who read Bangla.
+#
+# This turns one into the other. It does NOT decide anything: not who is
+# texted, not whether to text at all, not how urgent the situation is. The
+# supervisor sees the exact characters that will be sent and can edit every one
+# of them before confirming.
+#
+# 160 CHARACTERS IS A REAL CONSTRAINT, not a style preference. Beyond it the
+# gateway bills a second message per recipient, and on a 300-worker estate that
+# is 300 extra messages. Bangla is worse: SMS encodes non-Latin text as UCS-2,
+# which allows only 70 characters per part, so the model is told to be brief and
+# the UI shows the true remaining count.
+_SMS_REWRITE_SYSTEM = """You rewrite a tea estate supervisor's field message as a short SMS for workers in Sylhet, Bangladesh.
+
+The readers are pluckers with basic phones. Many read Bangla comfortably and
+English poorly. Write for someone reading quickly, outdoors, on a small screen.
+
+RULES, all of them absolute:
+- Say ONLY what the supervisor's message says. Add no instruction, no reason, no
+  reassurance and no detail that is not already there. If their message is
+  vague, the SMS is vague.
+- Never invent a time, a place, a field name or a number.
+- Do NOT add a greeting, a sign-off, an emoji or quotation marks.
+- Keep it under 160 characters. Shorter is better. One or two plain sentences.
+- Write it in LANG_PLACEHOLDER and nothing else. Do not append a translation.
+- Keep any number in Western digits (25, not ২৫).
+
+Return ONLY the message text. No preamble, no explanation, no markdown."""
+
+
+def _sms_rewrite_messages(req: "SmsRewriteRequest"):
+    lang = "Bangla" if str(req.language or "bn").lower().startswith("bn") else "English"
+    system = _SMS_REWRITE_SYSTEM.replace("LANG_PLACEHOLDER", lang)
+    parts = []
+    if req.title:
+        parts.append(f"Subject: {req.title}")
+    if req.zone:
+        parts.append(f"Field: {req.zone}")
+    if req.priority:
+        parts.append(f"Priority: {req.priority}")
+    parts.append(f"Message: {req.body}")
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n".join(parts)[:2000]
+            + f"\n\nWrite the SMS in {lang}, under 160 characters."},
+    ]
+
+
+@app.post("/sms-rewrite")
+def sms_rewrite_endpoint(req: SmsRewriteRequest):
+    if not (req.body or "").strip():
+        raise HTTPException(status_code=400, detail="No message to rewrite")
+    try:
+        text, provider = complete("sms_rewrite", _sms_rewrite_messages(req))
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
+    out = (text or "").strip().strip('"').strip()
+    if not out:
+        raise HTTPException(status_code=502, detail="Model returned an empty message")
+    # Models add a lead-in ("Here is the SMS:") often enough to be worth
+    # stripping. Only the last line is kept when that happens.
+    if "\n" in out:
+        lines = [l.strip() for l in out.splitlines() if l.strip()]
+        out = lines[-1] if len(lines) > 1 and len(lines[-1]) > 10 else " ".join(lines)
+    return {"message": out, "provider": provider, "length": len(out)}
+
+
+# --- weather briefing ---------------------------------------------------------
+#
+# Turns today's reading into a few sentences a supervisor can read at a glance.
+#
+# IT DOES NOT DECIDE WHETHER TO HARVEST. The Weather Monitor already carries a
+# rule-based harvest recommendation, computed from fixed thresholds and printed
+# with the measurement behind each line. If this endpoint also issued a verdict
+# the two could disagree on screen, and the reader would have no way to tell
+# which to believe -- so the prompt forbids it outright. This describes; the
+# rules decide.
+_WEATHER_BRIEF_SYSTEM = """You write a short weather note for a tea estate supervisor in Sylhet, Bangladesh.
+
+You are given today's recorded reading, a short forecast, and -- sometimes -- a
+figure measured from this estate's own records showing how much less each
+plucker picks on wet days.
+
+RULES, all of them absolute:
+- Use ONLY the numbers given. Never invent a temperature, a rainfall figure, a
+  percentage or a date. If something is missing, do not mention it.
+- Do NOT tell them whether to harvest, when to start, or to send workers home.
+  A separate panel already makes that call from fixed rules, and two answers
+  that disagree are worse than one. Describe the conditions and what they tend
+  to mean; leave the decision alone.
+- Do NOT recommend any chemical, fertiliser or spray.
+- If a measured rain impact is supplied, you may refer to it as something
+  measured on this estate. If it is absent or marked as not enough data, say
+  nothing about it at all -- do not guess a figure.
+- Never claim certainty about the future. A forecast is a forecast.
+
+Write 2-4 short sentences. No headings, no bullet points, no markdown, no
+greeting.
+
+WRITE THE WHOLE THING IN LANG_PLACEHOLDER. Every sentence, including any
+weather word like "rain" or "humid". Do not add an English translation and do
+not mix the two languages in one sentence.
+
+Keep all NUMBERS in Western digits (25, not ২৫) and keep the units as °C, mm,
+km/h and %. The rest of this screen shows them that way, and a supervisor
+comparing your sentence against the figures above should not have to convert
+anything in their head."""
+
+
+def _weather_brief_messages(req: "WeatherBriefRequest"):
+    # Same convention as _report_messages: anything starting "bn" is Bangla.
+    lang = "Bangla" if str(req.language or "en").lower().startswith("bn") else "English"
+    system = _WEATHER_BRIEF_SYSTEM.replace("LANG_PLACEHOLDER", lang)
+    payload = json.dumps({
+        "reading": req.reading,
+        "forecast": req.forecast,
+        "measured_rain_impact": req.rain_impact,
+    }, default=str)[:6000]
+    return [
+        {"role": "system", "content": system},
+        # Restating the language here as well as in the system prompt: smaller
+        # local models reliably drift back to English by the second sentence
+        # when told only once, at the top.
+        {"role": "user", "content": f"TODAY (JSON):\n{payload}\n\nWrite the note in {lang}."},
+    ]
+
+
+@app.post("/weather-brief")
+def weather_brief_endpoint(req: WeatherBriefRequest):
+    if not req.reading:
+        # No reading is an ordinary state on a fresh estate, not an error. The
+        # caller shows its own "press Refresh" empty state.
+        return {"summary": None, "provider": None}
+    try:
+        text, provider = complete("weather_brief", _weather_brief_messages(req))
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
+    summary = (text or "").strip()
+    if not summary:
+        raise HTTPException(status_code=502, detail="Model returned an empty briefing")
+    return {"summary": summary, "provider": provider}
 
 
 # --- pluck round advice -------------------------------------------------------

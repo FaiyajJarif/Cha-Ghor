@@ -53,6 +53,9 @@ public class LeafCollectionService {
     private final UserRepository userRepository;
     private final com.chaghor.chaghor.attendance.AttendanceRepository attendanceRepository;
     private final com.chaghor.chaghor.weather.WeatherLogRepository weatherLogRepository;
+    // Turns the forecast's invented rain factor into a measured one. Depends on
+    // the leaf REPOSITORY, not this service, so there is no circular bean.
+    private final com.chaghor.chaghor.weather.RainImpactService rainImpactService;
     private final com.chaghor.chaghor.vision.VisionInferenceRepository visionRepository;
     // Leaf weight feeds the payroll surplus, so every correction is traceable.
     private final AuditService auditService;
@@ -451,14 +454,42 @@ public class LeafCollectionService {
 
         // Rain suppresses picking: wet leaf is heavier but pluckers move slower
         // and stop early. Only applied when a real reading exists.
+        //
+        // THE HEAVY-RAIN FACTOR IS NOW MEASURED, NOT GUESSED.
+        // It used to be a flat 0.75 written straight into this method with
+        // nothing behind it. RainImpactService compares kg per worker present
+        // on wet days against dry days over the last six months of THIS
+        // estate's own records, and that ratio is used instead whenever there
+        // are enough matched days. Below the minimum it returns nothing and the
+        // documented 0.75 stands — the note below always says which one applied,
+        // so a reader is never left guessing whether a number was earned.
+        //
+        // Per worker, not per day: fewer people turn up when it rains, so
+        // comparing daily totals would measure attendance as much as weather.
         BigDecimal weatherFactor = BigDecimal.ONE;
         String weatherNote = null;
         var latest = weatherLogRepository.findAllByOrderByIdDesc(PageRequest.of(0, 1));
         if (!latest.isEmpty()) {
             BigDecimal rain = latest.get(0).getRainfallMm();
             if (rain != null && rain.doubleValue() >= 10) {
-                weatherFactor = new BigDecimal("0.75");
-                weatherNote = "Heavy rain in the last reading (" + rain + " mm) — expectations cut by 25%.";
+                var impact = rainImpactService.measure();
+                if (impact.enoughData() && impact.factor() != null) {
+                    weatherFactor = impact.factor();
+                    int cut = 100 - impact.factor()
+                            .multiply(BigDecimal.valueOf(100)).intValue();
+                    weatherNote = "Heavy rain in the last reading (" + rain + " mm). "
+                            + (cut > 0
+                               ? "Expectations cut by " + cut + "%, measured from "
+                               : "No cut applied — wet days have not measurably hurt picking across ")
+                            + impact.wetDays() + " wet and " + impact.dryDays()
+                            + " dry days on this estate.";
+                } else {
+                    weatherFactor = new BigDecimal("0.75");
+                    weatherNote = "Heavy rain in the last reading (" + rain + " mm) — "
+                            + "expectations cut by 25%. That is an estimate, not a "
+                            + "measurement: there are not yet enough matched wet and dry "
+                            + "days on record to work out the real figure.";
+                }
             } else if (rain != null && rain.doubleValue() >= 2.5) {
                 weatherFactor = new BigDecimal("0.90");
                 weatherNote = "Rain in the last reading (" + rain + " mm) — expectations cut by 10%.";
