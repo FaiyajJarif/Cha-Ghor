@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -27,6 +27,8 @@ import {
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { BTN_GHOST } from "../../lib/ui";
+import { WS_BASE } from "../../lib/config";
+import { closeSocket } from "../../lib/ws";
 import InfoTip from "../../components/admin/InfoTip";
 
 // Tea Garden Overview — the supervisor's daily picture.
@@ -122,6 +124,7 @@ export default function SupervisorDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshingWeather, setRefreshingWeather] = useState(false);
+  const [live, setLive] = useState(false);
 
   const load = useCallback(async () => {
     const [l, ls, a, at, w, wt, cs, cl] = await Promise.all([
@@ -164,6 +167,85 @@ export default function SupervisorDashboard() {
       active = false;
     };
   }, [load]);
+
+  // Live updates.
+  //
+  // This was the LAST supervisor screen without a socket, and the worst one to
+  // leave out: it is the landing page, it shows today's figures, and it is the
+  // screen most likely to sit open on a desk all day. Every one of the eight
+  // endpoints it reads now pushes a frame when its data changes, and until now
+  // this page ignored all of them — so the numbers a supervisor glanced at
+  // could be hours old with nothing saying so.
+  //
+  // It listens for ALL five kinds because it summarises all five modules. That
+  // is unusual — every other board filters to the one or two that move it —
+  // and it is correct here for the same reason: a dashboard that missed one
+  // would be silently wrong about that section only, which is harder to notice
+  // than being wrong about everything.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
+  useEffect(() => {
+    let retry;
+    let closedByUs = false;
+    let ws;
+    const url =
+      (typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.VITE_WS_URL) ||
+      `${WS_BASE}/ws/notifications`;
+
+    // Every socket kind the backend actually emits, taken from the call sites
+    // rather than guessed. Note the case ones are created / replied / status —
+    // there is no "case.updated", and listening for one would have silently
+    // missed every reply and every status change.
+    //
+    // NOT included: leaf.record, attendance.mark, harvest.create and friends.
+    // Those look like frame names but are AUDIT action strings; nothing ever
+    // sends them over the socket.
+    const KINDS = new Set([
+      "leaf.saved",
+      "attendance.saved",
+      "weather.saved",
+      "zone.saved",
+      "harvest.saved",
+      "case.created",
+      "case.replied",
+      "case.status",
+    ]);
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onopen = () => setLive(true);
+      ws.onmessage = (e) => {
+        let kind = "";
+        try {
+          kind = JSON.parse(e.data)?.kind || "";
+        } catch {
+          return;
+        }
+        if (!KINDS.has(kind) || !loadRef.current) return;
+        loadRef.current().catch(() => {});
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => {
+        setLive(false);
+        if (!closedByUs) retry = setTimeout(connect, 5000);
+      };
+    };
+    connect();
+    return () => {
+      closedByUs = true;
+      clearTimeout(retry);
+      closeSocket(ws);
+    };
+  }, []);
 
   const refreshWeather = async () => {
     setRefreshingWeather(true);
@@ -243,6 +325,25 @@ export default function SupervisorDashboard() {
             })}
           </p>
         </div>
+        {/* This screen is the one most likely to sit open all day, so whether
+            it is still listening matters more here than anywhere else. */}
+        <span
+          title={
+            live
+              ? "Connected. Weigh-ins, attendance, weather and reports update here as they happen."
+              : "Not connected. These figures are correct as of the last load but will not update on their own."
+          }
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+            live ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+          }`}
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${
+              live ? "animate-pulse bg-emerald-500" : "bg-slate-400"
+            }`}
+          />
+          {live ? "Live" : "Offline"}
+        </span>
       </div>
 
       {error && (
