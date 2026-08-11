@@ -86,7 +86,16 @@ public class DataInitializer implements CommandLineRunner {
                 .isActive(true)
                 .build();
         userRepository.save(user);
-        log.warn("Seeded {} -> username: {}  password: {}  (CHANGE THIS)", role, username, rawPassword);
+        // THE PASSWORD IS NOT LOGGED.
+        //
+        // It used to be, so a plaintext admin credential landed in stdout on
+        // every fresh boot -- and application logs get shipped, tailed in a
+        // shared terminal, and pasted into bug reports far more freely than
+        // anyone treats a password. The seeded values are documented in
+        // CLAUDE.md and the README for whoever needs them.
+        log.warn("Seeded {} account '{}' with the documented default password. "
+                        + "CHANGE IT before this reaches anyone outside development.",
+                role, username);
     }
 
     // Seeds a few zones + 5 demo workers so the Workforce table isn't empty on a

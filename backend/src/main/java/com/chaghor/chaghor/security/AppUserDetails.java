@@ -1,5 +1,6 @@
 package com.chaghor.chaghor.security;
 
+import com.chaghor.chaghor.user.ApprovalStatus;
 import com.chaghor.chaghor.user.User;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -51,8 +52,16 @@ public class AppUserDetails implements UserDetails {
         return true;
     }
 
+    // BOTH CONDITIONS, NOT JUST isActive.
+    //
+    // A pending signup is created with isActive=false, so isActive alone would
+    // already block it today. Requiring approval explicitly means the guarantee
+    // survives anything that flips isActive on later -- a bulk reactivation, a
+    // hand-written UPDATE, a future admin screen -- without also approving the
+    // person. The two flags answer different questions and both must say yes.
     @Override
     public boolean isEnabled() {
-        return user.isActive();
+        return user.isActive()
+                && ApprovalStatus.APPROVED.equals(user.getApprovalStatus());
     }
 }

@@ -47,7 +47,7 @@ export default function RoleSelect() {
             onClick={() => navigate("/register")}
             className="font-semibold text-cg-bright hover:underline"
           >
-            Create an account
+            Request an account
           </button>
           <span className="px-2 text-white/30">|</span>
           Need assistance?{" "}

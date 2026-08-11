@@ -34,6 +34,13 @@ public class WorkerService {
     private final UserRepository userRepository;
     private final ZoneRepository zoneRepository;
     private final PasswordEncoder passwordEncoder;
+
+    // Mirrors SignupRequest and RegisterRequest. Duplicated as a compiled
+    // Pattern rather than re-validated through a DTO because this path takes a
+    // WorkerRequest, not a credential DTO.
+    private static final java.util.regex.Pattern STRONG_PASSWORD =
+            java.util.regex.Pattern.compile(
+                    "^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,72}$");
     private final com.chaghor.chaghor.web.DailyLedgerService dailyLedger;
 
     // One worker's money day by day. Admin/supervisor view of the SAME
@@ -168,15 +175,27 @@ public class WorkerService {
         if (req.createLogin() == null || !req.createLogin()) {
             return null;
         }
-        if (!hasText(req.username()) || req.password() == null || req.password().length() < 6) {
+        // SAME RULE AS EVERY OTHER ACCOUNT PATH.
+        //
+        // This is the third place a login can be created, and it was still
+        // checking length alone -- so "12345678" was rejected by the sign-up
+        // form and the admin form, and accepted here. A rule enforced in two
+        // places out of three is not a rule.
+        if (!hasText(req.username()) || req.password() == null
+                || !STRONG_PASSWORD.matcher(req.password()).matches()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A username and a 6+ character password are required to create a worker login");
+                    "A username is required, and the password must be 8-72 characters "
+                            + "with a capital letter, a small letter, a number and a "
+                            + "symbol such as ! # or @.");
         }
-        if (userRepository.existsByUsername(req.username())) {
+        if (userRepository.existsByUsernameIgnoreCase(req.username())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "That username already exists");
         }
         User u = User.builder()
-                .username(req.username())
+                // Lower-cased for the same reason as registration: the unique
+                // index is case-sensitive, so "Rahim" and "rahim" would be two
+                // accounts for one man.
+                .username(req.username().trim().toLowerCase(java.util.Locale.ROOT))
                 .passwordHash(passwordEncoder.encode(req.password()))
                 .role(Role.worker)
                 .locale(Locale.en)

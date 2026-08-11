@@ -6,38 +6,113 @@ import { apiError } from "../lib/apiError";
 
 const bg = { backgroundImage: "linear-gradient(160deg, #16281c, #24422e)" };
 
+// Workers see Bangla and get PIN sign-in; everyone else sees English and a
+// password. The role arrives as ?role=worker from RoleSelect and the
+// registration screen.
+const T = {
+  en: {
+    welcome: "Welcome back",
+    sub: "Sign in to access Cha Ghor",
+    username: "Username",
+    password: "Password",
+    signIn: "Log In",
+    signingIn: "Signing in…",
+    failed: "Invalid username or password.",
+    newHere: "New here?",
+    request: "Request an account",
+    usePin: "Sign in with a PIN instead",
+    usePassword: "Sign in with a password instead",
+    phone: "Mobile number",
+    pin: "4-digit PIN",
+    pinHelp: "The estate office gave you this when your account was approved.",
+    badPhone: "Enter the 10 digits after +880.",
+    badPin: "The PIN is 4 digits.",
+  },
+  bn: {
+    welcome: "স্বাগতম",
+    sub: "চা ঘরে ঢুকতে সাইন ইন করুন",
+    username: "ইউজারনেম",
+    password: "পাসওয়ার্ড",
+    signIn: "ঢুকুন",
+    signingIn: "ঢোকা হচ্ছে…",
+    failed: "ইউজারনেম বা পাসওয়ার্ড ঠিক নেই।",
+    newHere: "নতুন?",
+    request: "অ্যাকাউন্টের জন্য আবেদন করুন",
+    usePin: "পিন দিয়ে ঢুকুন",
+    usePassword: "পাসওয়ার্ড দিয়ে ঢুকুন",
+    phone: "মোবাইল নম্বর",
+    pin: "৪ সংখ্যার পিন",
+    pinHelp: "অ্যাকাউন্ট অনুমোদনের সময় অফিস থেকে এই পিন দেওয়া হয়েছে।",
+    badPhone: "+৮৮০ এর পরের ১০ সংখ্যা লিখুন।",
+    badPin: "পিন ৪ সংখ্যার।",
+  },
+};
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithPin } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const role = params.get("role");
+  const isWorker = role === "worker";
+  const t = isWorker ? T.bn : T.en;
+
+  // A worker lands on the PIN form; everyone else on the password form. Both
+  // remain reachable either way — a worker who prefers their password should
+  // not be forced through a PIN, and vice versa.
+  const [mode, setMode] = useState(isWorker ? "pin" : "password");
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [pin, setPin] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const go = (u) => navigate(u.role === "admin" ? "/admin" : "/dashboard");
+
+  // Same normalisation as the registration screen: people type their number as
+  // 01712345678 and the +880 is printed, not typed.
+  const setPhoneDigits = (e) => {
+    let d = e.target.value.replace(/\D/g, "");
+    if (d.startsWith("880")) d = d.slice(3);
+    if (d.startsWith("0")) d = d.slice(1);
+    setPhone(d.slice(0, 10));
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const u = await login(username, password);
-      navigate(u.role === "admin" ? "/admin" : "/dashboard");
+      if (mode === "pin") {
+        if (phone.length !== 10) {
+          setError(t.badPhone);
+          return;
+        }
+        if (!/^\d{4}$/.test(pin)) {
+          setError(t.badPin);
+          return;
+        }
+        go(await loginWithPin("+880" + phone, pin));
+      } else {
+        go(await login(username, password));
+      }
     } catch (err) {
-      // apiError surfaces a clear message on 429 (rate limit); anything else
-      // falls back to the generic invalid-credentials copy.
-      setError(apiError(err, "Invalid username or password."));
+      // apiError surfaces the server's message, which now distinguishes a
+      // pending or rejected account from a wrong password.
+      setError(apiError(err, t.failed));
     } finally {
       setLoading(false);
     }
   };
 
+  const inputCls =
+    "w-full rounded-lg bg-white/10 px-4 py-3 text-sm text-white placeholder-white/40 outline-none ring-1 ring-white/15 focus:ring-cg-bright";
+  const labelCls = "text-xs font-semibold uppercase tracking-wide text-cg-bright";
+
   return (
-    <main
-      className="grid min-h-screen place-items-center px-4 py-10"
-      style={bg}
-    >
+    <main className="grid min-h-screen place-items-center px-4 py-10" style={bg}>
       <div className="w-full max-w-md">
         <div className="text-center text-white">
           <Link
@@ -47,84 +122,124 @@ export default function Login() {
           >
             <LuLeaf />
           </Link>
-          <h1 className="mt-3 text-2xl font-extrabold">Cha Ghor</h1>
+          <h1 className="mt-3 text-2xl font-extrabold">
+            {isWorker ? "চা ঘর" : "Cha Ghor"}
+          </h1>
           <p className="text-xs uppercase tracking-widest text-white/60">
             Tea Garden Management
           </p>
         </div>
+
         <div className="mt-6 rounded-3xl bg-white/5 p-8 text-white ring-1 ring-white/10">
-          <h2 className="text-xl font-bold">Welcome back</h2>
-          <p className="mt-1 text-sm text-white/60">
-            Sign in to access Cha Ghor{role ? ` (${role})` : ""}.
-          </p>
+          <h2 className="text-xl font-bold">{t.welcome}</h2>
+          <p className="mt-1 text-sm text-white/60">{t.sub}</p>
+
           <form className="mt-6 space-y-4" onSubmit={submit}>
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-cg-bright">
-                Username
-              </label>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
-                autoComplete="username"
-                className="mt-1 w-full rounded-lg bg-white/10 px-4 py-3 text-sm outline-none ring-1 ring-white/15 transition focus:ring-cg-bright"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-cg-bright">
-                Password
-              </label>
-              <div className="relative mt-1">
-                <input
-                  type={show ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  className="w-full rounded-lg bg-white/10 px-4 py-3 pr-11 text-sm outline-none ring-1 ring-white/15 transition focus:ring-cg-bright"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShow((s) => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 transition hover:text-cg-bright"
-                  aria-label={show ? "Hide password" : "Show password"}
-                >
-                  {show ? <LuEyeOff /> : <LuEye />}
-                </button>
-              </div>
-            </div>
+            {mode === "pin" ? (
+              <>
+                <label className="block">
+                  <span className={labelCls}>{t.phone}</span>
+                  <div className="mt-1 flex overflow-hidden rounded-lg bg-white/10 ring-1 ring-white/15 focus-within:ring-cg-bright">
+                    <span className="grid shrink-0 place-items-center border-r border-white/15 bg-white/5 px-3 text-sm font-semibold text-white/70">
+                      +880
+                    </span>
+                    <input
+                      className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-white/40 outline-none"
+                      value={phone}
+                      onChange={setPhoneDigits}
+                      placeholder="1712345678"
+                      inputMode="numeric"
+                      autoComplete="tel"
+                    />
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className={labelCls}>{t.pin}</span>
+                  <input
+                    className={`${inputCls} mt-1 text-center text-2xl tracking-[0.6em]`}
+                    value={pin}
+                    onChange={(e) =>
+                      setPin(e.target.value.replace(/\D/g, "").slice(0, 4))
+                    }
+                    placeholder="••••"
+                    inputMode="numeric"
+                    autoComplete="off"
+                  />
+                  <span className="mt-1 block text-[11px] text-white/45">
+                    {t.pinHelp}
+                  </span>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="block">
+                  <span className={labelCls}>{t.username}</span>
+                  <input
+                    className={`${inputCls} mt-1`}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className={labelCls}>{t.password}</span>
+                  <div className="relative mt-1">
+                    <input
+                      type={show ? "text" : "password"}
+                      className={inputCls}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShow((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70"
+                      aria-label={show ? "Hide password" : "Show password"}
+                    >
+                      {show ? <LuEyeOff size={16} /> : <LuEye size={16} />}
+                    </button>
+                  </div>
+                </label>
+              </>
+            )}
+
             {error && (
-              <p className="rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-300">
+              <p className="rounded-lg bg-red-500/15 px-4 py-3 text-sm text-red-200 ring-1 ring-red-400/30">
                 {error}
               </p>
             )}
+
             <button
+              type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-cg-bright py-3 font-semibold text-cg-darker transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 disabled:opacity-60"
+              className="w-full rounded-lg bg-cg-bright py-3 text-sm font-bold text-[#16281c] transition hover:brightness-110 disabled:opacity-60"
             >
-              {loading ? "Signing in…" : "Log In"}
+              {loading ? t.signingIn : t.signIn}
             </button>
           </form>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMode((m) => (m === "pin" ? "password" : "pin"));
+              setError("");
+            }}
+            className="mt-4 w-full text-center text-sm font-semibold text-cg-bright hover:underline"
+          >
+            {mode === "pin" ? t.usePassword : t.usePin}
+          </button>
+
           <p className="mt-5 text-center text-sm text-white/60">
-            New here?{" "}
+            {t.newHere}{" "}
             <Link
-              to="/register"
+              to={`/register${isWorker ? "?role=worker" : ""}`}
               className="font-semibold text-cg-bright hover:underline"
             >
-              Create new account
+              {t.request}
             </Link>
-          </p>
-          <p className="mt-2 text-center text-sm text-white/60">
-            <Link
-              to="/"
-              className="font-semibold text-cg-bright hover:underline"
-            >
-              Back to home
-            </Link>
-          </p>
-          <p className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-center text-xs text-white/50">
-            Demo logins — admin / admin123 · supervisor / super123 · worker /
-            worker123
           </p>
         </div>
       </div>

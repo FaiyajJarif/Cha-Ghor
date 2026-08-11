@@ -36,6 +36,15 @@ public class SecurityConfig {
     @Value("${app.cors.allowed-origins:http://localhost:5173}")
     private String[] allowedOrigins;
 
+    // Addresses allowed to speak for a client via X-Forwarded-For.
+    //
+    // EMPTY BY DEFAULT, and that is the safe setting. If you put nginx or a load
+    // balancer in front of this, list its address here -- otherwise every login
+    // will be counted against the proxy rather than the real client, and one
+    // person mistyping a password would lock out the whole estate.
+    @Value("${app.security.trusted-proxies:}")
+    private String[] trustedProxies;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -59,6 +68,14 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/login").permitAll()
+                        // Self-service account requests. The ONLY unauthenticated
+                        // write in the API, and safe because it grants nothing:
+                        // the account is created pending and inactive, cannot be
+                        // requested as admin, and cannot log in until an admin
+                        // approves it. Rate limited below, same as login.
+                        .requestMatchers("/api/v1/auth/signup").permitAll()
+                        // Worker PIN sign-in. Rate limited like the others.
+                        .requestMatchers("/api/v1/auth/login/pin").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         // The notification WebSocket handshake carries no Bearer header
                         // (the browser's native WebSocket API can't set one), so the
@@ -77,7 +94,9 @@ public class SecurityConfig {
                 // Throttle brute-force login attempts BEFORE the auth logic runs.
                 // Instantiated here (not a @Component) so it is only registered in
                 // the security chain, never as a global servlet filter.
-                .addFilterBefore(new LoginRateLimitFilter(), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(
+                        new LoginRateLimitFilter(java.util.Set.of(trustedProxies)),
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

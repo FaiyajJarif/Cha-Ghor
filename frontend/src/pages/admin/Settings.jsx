@@ -9,6 +9,10 @@ import {
   LuTrash2,
   LuSave,
   LuShieldCheck,
+  LuUserPlus,
+  LuUserCheck,
+  LuCheck,
+  LuX,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
@@ -120,6 +124,131 @@ function Toggle({ checked, onChange, label, desc }) {
 export default function Settings() {
   const { user, updateUser } = useAuth();
   const isAdmin = user?.role === "admin";
+
+  // ---- pending account requests (admin only) ---------------------------
+  //
+  // Workers and supervisors can request an account themselves; nothing is
+  // granted until someone here accepts it. Until this queue existed the
+  // requests had nowhere to land, which is the same as not having the feature.
+  const [pending, setPending] = useState([]);
+  const [deciding, setDeciding] = useState(null);
+  const [queueMsg, setQueueMsg] = useState(null);
+  const [issuedPin, setIssuedPin] = useState(null);
+
+  const loadPending = async () => {
+    try {
+      const { data } = await api.get("/auth/pending");
+      setPending(Array.isArray(data) ? data : []);
+    } catch {
+      // A failure here must not blank the rest of Settings.
+      setPending([]);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) loadPending();
+  }, [isAdmin]);
+
+  // Which worker record each pending WORKER request will be attached to.
+  // Keyed by request id. "" means none chosen yet, "new" means create one.
+  const [linkChoice, setLinkChoice] = useState({});
+
+  const decideAccount = async (id, action, name, role) => {
+    let reason = null;
+    let body = {};
+    if (action === "reject") {
+      // Asked for, not required: an unexplained rejection is one the office
+      // cannot answer for when the person asks why.
+      reason = window.prompt(`Why is ${name}'s request being turned down?`) || "";
+      body = { reason };
+    } else if (role === "worker") {
+      // THE ADMIN PICKS. The server used to match on name and two workers can
+      // share one, so a coin flip decided whose wages the login could see.
+      const choice = linkChoice[id];
+      if (!choice) {
+        setQueueMsg({
+          ok: false,
+          text: `Choose which worker record ${name} is, or create a new one. Their pay depends on it.`,
+        });
+        return;
+      }
+      body = choice === "new" ? { createWorker: true } : { workerId: Number(choice) };
+    }
+    setDeciding(id);
+    setQueueMsg(null);
+    try {
+      const { data } = await api.post(`/auth/pending/${id}/${action}`, body);
+      // THE PIN IS SHOWN ONCE AND NEVER AGAIN. It is BCrypt-hashed server-side,
+      // so nothing can recover it later — if this message is dismissed before
+      // the admin writes it down, a new PIN has to be issued.
+      if (action === "approve" && data?.pin) {
+        setIssuedPin({ name, pin: String(data.pin) });
+      }
+      setQueueMsg({
+        ok: true,
+        text:
+          action === "approve"
+            ? `${name} can now sign in.`
+            : `${name}'s request was turned down.`,
+      });
+      await loadPending();
+    } catch (err) {
+      setQueueMsg({ ok: false, text: apiError(err, "Could not save that decision.") });
+    } finally {
+      setDeciding(null);
+    }
+  };
+
+  // ---- staff accounts (admin only) ------------------------------------
+  //
+  // Account creation lives HERE, behind an admin session, because
+  // POST /auth/register is admin-only by design: an account on a payroll
+  // system is how a person gets paid, so the office decides who has one.
+  // The public /register page could never have worked -- it would have hit
+  // 403 on every submit -- and it now points people at the office instead.
+  //
+  // Workers get their login from Workforce, where the login is created
+  // alongside the worker record. This form is for admin and supervisor staff.
+  const [acct, setAcct] = useState({
+    username: "",
+    email: "",
+    password: "",
+    confirm: "",
+    role: "supervisor",
+  });
+  const [creating, setCreating] = useState(false);
+  const [acctMsg, setAcctMsg] = useState(null);
+
+  const createAccount = async (e) => {
+    e.preventDefault();
+    setAcctMsg(null);
+    if (acct.password !== acct.confirm) {
+      setAcctMsg({ ok: false, text: "The two passwords do not match." });
+      return;
+    }
+    if (acct.password.length < 8) {
+      setAcctMsg({ ok: false, text: "Password must be at least 8 characters." });
+      return;
+    }
+    setCreating(true);
+    try {
+      const { data } = await api.post("/auth/register", {
+        username: acct.username.trim(),
+        email: acct.email.trim() || null,
+        password: acct.password,
+        role: acct.role,
+      });
+      setAcctMsg({
+        ok: true,
+        text: `Created ${data.username} as ${data.role}. Give them the password directly — it is not shown again.`,
+      });
+      setAcct({ username: "", email: "", password: "", confirm: "", role: "supervisor" });
+    } catch (err) {
+      setAcctMsg({ ok: false, text: apiError(err, "Could not create the account.") });
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const [loading, setLoading] = useState(true);
 
@@ -590,6 +719,210 @@ export default function Settings() {
               </p>
             </div>
           </div>
+        </SectionCard>
+      )}
+
+      {isAdmin && (
+        <SectionCard
+          icon={LuUserCheck}
+          title={`Account requests${pending.length ? ` (${pending.length})` : ""}`}
+          info="People who have asked for an account from the sign-up page. Nothing is granted until you accept it — a pending account cannot sign in. Approving a worker also creates or links their Workforce record so payroll can see them."
+        >
+          {pending.length === 0 ? (
+            <p className="rounded-xl bg-cg-lime/20 px-4 py-6 text-center text-sm text-cg-ink/55">
+              No one is waiting for an account.
+            </p>
+          ) : (
+            <ul className="divide-y divide-cg-green/10">
+              {pending.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-semibold text-cg-ink">
+                      {p.displayName || p.username}
+                      <span className="ml-2 rounded-full bg-cg-lime/60 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-cg-green">
+                        {p.role}
+                      </span>
+                    </p>
+                    <p className="text-xs text-cg-ink/55">
+                      @{p.username}
+                      {p.phone ? " · " + p.phone : ""}
+                      {p.email ? " · " + p.email : ""}
+                    </p>
+                    {p.requestedAt && (
+                      <p className="text-[11px] text-cg-ink/40">
+                        asked {String(p.requestedAt).slice(0, 10)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {p.role === "worker" && (
+                      <label className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-cg-ink/60">
+                          Is
+                        </span>
+                        <select
+                          className="rounded-lg border border-cg-green/20 bg-white px-2 py-1.5 text-sm text-cg-ink"
+                          value={linkChoice[p.id] || ""}
+                          onChange={(e) =>
+                            setLinkChoice((c) => ({ ...c, [p.id]: e.target.value }))
+                          }
+                        >
+                          <option value="">Choose worker record…</option>
+                          {/* Zone and phone are shown because two people can
+                              share a name — the name alone is not enough to
+                              tell whose wages this login will see. */}
+                          {(p.candidates || []).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.fullName}
+                              {c.zoneName ? ` · ${c.zoneName}` : ""}
+                              {c.phone ? ` · ${c.phone}` : ""}
+                              {c.nameMatches ? " (same name)" : ""}
+                            </option>
+                          ))}
+                          <option value="new">＋ Create a new worker record</option>
+                        </select>
+                      </label>
+                    )}
+                    <button
+                      onClick={() =>
+                        decideAccount(p.id, "approve", p.displayName || p.username, p.role)
+                      }
+                      className={BTN_DARK}
+                      disabled={deciding === p.id}
+                    >
+                      <LuCheck size={15} /> Approve
+                    </button>
+                    <button
+                      onClick={() =>
+                        decideAccount(p.id, "reject", p.displayName || p.username, p.role)
+                      }
+                      className={BTN_GHOST}
+                      disabled={deciding === p.id}
+                    >
+                      <LuX size={15} /> Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {issuedPin && (
+            <div className="mt-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-300">
+              <p className="text-sm font-bold text-amber-900">
+                {issuedPin.name}&rsquo;s sign-in PIN
+              </p>
+              <p className="my-2 text-center text-4xl font-extrabold tracking-[0.4em] text-amber-900">
+                {issuedPin.pin}
+              </p>
+              <p className="text-xs leading-relaxed text-amber-800">
+                Write this down and give it to them now. It is stored encrypted
+                and <strong>cannot be looked up again</strong> — if it is lost, a
+                new PIN has to be issued. They sign in with their mobile number
+                and these four digits.
+              </p>
+              <button
+                onClick={() => setIssuedPin(null)}
+                className={`${BTN_GHOST} mt-3`}
+              >
+                I have written it down
+              </button>
+            </div>
+          )}
+          {queueMsg && (
+            <p
+              className={`mt-3 rounded-lg px-3 py-2 text-sm ${
+                queueMsg.ok ? "bg-cg-lime/30 text-cg-ink/80" : "bg-red-50 text-red-700"
+              }`}
+            >
+              {queueMsg.text}
+            </p>
+          )}
+        </SectionCard>
+      )}
+
+      {isAdmin && (
+        <SectionCard
+          icon={LuUserPlus}
+          title="Staff accounts"
+          info="Create admin and supervisor logins. Worker logins are created in Workforce, alongside the worker record. There is no public sign-up: an account is how someone gets paid, so the office decides who has one."
+          footer={
+            <button
+              type="submit"
+              form="staff-account-form"
+              className={BTN_DARK}
+              disabled={creating}
+            >
+              {creating ? "Creating…" : "Create account"}
+            </button>
+          }
+        >
+          <form id="staff-account-form" onSubmit={createAccount} className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Username"
+              value={acct.username}
+              onChange={(e) => setAcct((a) => ({ ...a, username: e.target.value }))}
+              placeholder="rahim.uddin"
+              autoComplete="off"
+              required
+            />
+            <label className="block">
+              <span className="text-sm font-semibold text-cg-ink/80">Role</span>
+              <select
+                className={FIELD}
+                value={acct.role}
+                onChange={(e) => setAcct((a) => ({ ...a, role: e.target.value }))}
+              >
+                <option value="supervisor">Supervisor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <Field
+              label="Email (optional)"
+              type="email"
+              value={acct.email}
+              onChange={(e) => setAcct((a) => ({ ...a, email: e.target.value }))}
+              placeholder="name@example.com"
+              autoComplete="off"
+            />
+            <div />
+            <Field
+              label="Password"
+              type="password"
+              value={acct.password}
+              onChange={(e) => setAcct((a) => ({ ...a, password: e.target.value }))}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              required
+            />
+            <Field
+              label="Confirm password"
+              type="password"
+              value={acct.confirm}
+              onChange={(e) => setAcct((a) => ({ ...a, confirm: e.target.value }))}
+              autoComplete="new-password"
+              required
+            />
+            {/* Said plainly, because the alternative is an admin assuming the
+                system will email it. Nothing here sends anything. */}
+            <p className="sm:col-span-2 text-xs text-cg-ink/55">
+              The password is not emailed or shown again. Hand it over directly and
+              ask them to change it in Settings after their first sign-in.
+            </p>
+            {acctMsg && (
+              <p
+                className={`sm:col-span-2 rounded-lg px-3 py-2 text-sm ${
+                  acctMsg.ok
+                    ? "bg-cg-lime/30 text-cg-ink/80"
+                    : "bg-red-50 text-red-700"
+                }`}
+              >
+                {acctMsg.text}
+              </p>
+            )}
+          </form>
         </SectionCard>
       )}
     </div>

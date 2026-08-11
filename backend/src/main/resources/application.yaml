@@ -65,9 +65,28 @@ app:
     # happened. Temperature, humidity, rainfall and condition are kept forever,
     # because the yield forecast is meant to learn from them.
     prune-cron: ${APP_WEATHER_PRUNE_CRON:0 30 3 * * *}
+  security:
+    # Reverse proxies permitted to set X-Forwarded-For on behalf of a client.
+    #
+    # EMPTY means "trust nothing but the TCP socket", which is correct when the
+    # backend is reached directly. X-Forwarded-For is an ordinary request header
+    # that any caller can set, so honouring it from an untrusted peer lets an
+    # attacker land every login attempt in a fresh rate-limit bucket.
+    #
+    # Put nginx / your load balancer address here if you add one, e.g.
+    #   APP_SECURITY_TRUSTED_PROXIES=10.0.0.5,10.0.0.6
+    trusted-proxies: ${APP_SECURITY_TRUSTED_PROXIES:}
   jwt:
-    # Dev default is long enough for HS384. ALWAYS override with APP_JWT_SECRET in
-    # staging/production, and rotate it if it ever leaks.
+    # THIS DEFAULT IS PUBLIC. It is in the git history of this repository, so
+    # anyone who can read the source can sign a token that says they are an
+    # admin -- no password involved.
+    #
+    # It stays here because a fresh clone should run with no setup, and it is
+    # now SAFE to keep: JwtService refuses to start on this value unless the
+    # dev/local/test profile is active (or no profile is set at all, i.e. a
+    # laptop). Any real deployment must set APP_JWT_SECRET or it will not boot.
+    #
+    # Minimum 48 characters -- HS384 signs with a 384-bit key.
     secret: ${APP_JWT_SECRET:dev-only-chaghor-secret-a1b2c3d4e5f60718293a4b5c6d7e8f90}
     expiration-ms: ${APP_JWT_EXPIRATION_MS:86400000}   # 24h
   ai:

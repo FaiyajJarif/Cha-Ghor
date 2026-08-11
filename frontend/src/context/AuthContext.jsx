@@ -9,13 +9,30 @@ export function AuthProvider({ children }) {
     return raw ? JSON.parse(raw) : null;
   });
 
-  const login = async (username, password) => {
-    const { data } = await api.post("/auth/login", { username, password });
+  // Both sign-in routes end the same way, so the session handling lives in one
+  // place. Splitting it produced two copies of "store token, store user, set
+  // state" that could drift.
+  const finish = (data) => {
     localStorage.setItem("token", data.token);
     const u = { username: data.username, role: data.role };
     localStorage.setItem("user", JSON.stringify(u));
     setUser(u);
     return u;
+  };
+
+  const login = async (username, password) => {
+    const { data } = await api.post("/auth/login", { username, password });
+    return finish(data);
+  };
+
+  // Workers sign in with their mobile number and a 4-digit PIN.
+  //
+  // The phone is required alongside the PIN, not for convenience but because a
+  // PIN alone is 10,000 combinations shared across the estate — a bare-PIN
+  // login would let a random guess land on somebody's account.
+  const loginWithPin = async (phone, pin) => {
+    const { data } = await api.post("/auth/login/pin", { phone, pin });
+    return finish(data);
   };
 
   const logout = () => {
@@ -58,7 +75,7 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const value = { user, login, logout, updateUser };
+  const value = { user, login, loginWithPin, logout, updateUser };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
