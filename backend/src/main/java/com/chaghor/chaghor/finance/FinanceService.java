@@ -242,11 +242,47 @@ public class FinanceService {
                 totals == null ? BigDecimal.ZERO : nz(totals.getTotalIn()));
     }
 
+    // Undo a loan repayment that was recorded and then found not to have
+    // happened -- the day it came from was corrected after settlement.
+    //
+    // A COMPENSATING ROW, NOT A DELETED ONE. The original loan_in stays exactly
+    // where it is. Erasing it would leave a loan balance that no longer matches
+    // its own repayment history, and would be indistinguishable from somebody
+    // removing an inconvenient number.
+    //
+    // amount stays >= 0 (chk_finance_amount_nonneg). Direction is carried by
+    // source_type = 'loan_in_reversal', which the cashOnHand rollup reads --
+    // and which is cash-NEUTRAL when the original repayment was withheld from
+    // wages, because no cash moved in either direction.
+    //
+    // Idempotent on (loan_in_reversal, repaymentId): reversing twice is a no-op.
+    public void postLoanRepaymentReversal(Long repaymentId, String reference, String account,
+                                          BigDecimal amount, LocalDate date, String reason) {
+        if (repaymentId != null
+                && repo.existsBySourceTypeAndSourceId("loan_in_reversal", repaymentId)) {
+            return;
+        }
+        FinanceEntry e = FinanceEntry.builder()
+                .entryDate(date == null ? LocalDate.now() : date)
+                .refId(reference == null || reference.isBlank() ? null : reference)
+                .category(LedgerCategory.LOAN)
+                .account(account == null || account.isBlank() ? "Loan repayment reversed" : account.trim())
+                .amount(nz(amount))
+                .status(LedgerStatus.SETTLED)
+                .note(reason == null || reason.isBlank()
+                        ? "Loan repayment reversed - the day it came from was corrected"
+                        : "Loan repayment reversed - " + reason)
+                .sourceType("loan_in_reversal")
+                .sourceId(repaymentId)
+                .build();
+        repo.save(e);
+    }
+
     // ---- helpers ----
 
     // For the loan_in rows in this page, source_id is the loan_repayment_entry
-    // id. Returns the subset whose repayment carries a payroll_id, i.e. it was
-    // recovered from a payslip and moved no cash.
+    // id. Returns the subset that was WITHHELD FROM WAGES -- by a payslip
+    // (legacy) or by daily settlement -- and therefore moved no cash.
     private java.util.Set<Long> wageDeductedRepaymentIds(List<FinanceEntry> rows) {
         java.util.Set<Long> ids = new java.util.HashSet<>();
         for (FinanceEntry e : rows) {
@@ -258,7 +294,7 @@ public class FinanceService {
             return java.util.Set.of();
         }
         java.util.Set<Long> out = new java.util.HashSet<>();
-        repaymentRepository.findByIdInAndPayrollIdIsNotNull(ids)
+        repaymentRepository.findWageWithheld(ids)
                 .forEach(r -> out.add(r.getId()));
         return out;
     }

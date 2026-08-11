@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* This product has ONE theme, a light one. Without declaring that, a browser
+   running in OS dark mode "helpfully" darkens form controls it considers
+   unstyled — and Tailwind's preflight sets `color: inherit` on inputs, so the
+   text does not darken with it. That combination is what made the weigh-in
+   weight box render white on white.
+   Declaring the scheme fixes every bare input at once rather than one at a
+   time, and none of this UI has a dark variant to fall back to. */
+:root {
+  color-scheme: light;
+}
+
+
 html {
   scroll-behavior: smooth;
 }

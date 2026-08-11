@@ -26,6 +26,7 @@ import ZonePicker from "../../components/supervisor/ZonePicker";
 import ZoneHeatmap from "../../components/supervisor/ZoneHeatmap";
 import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
 import AttendanceAiPanel from "../../components/supervisor/AttendanceAiPanel";
+import { todayISO } from "../../lib/localDate";
 
 // Supervisor attendance register.
 //
@@ -103,7 +104,7 @@ function Kpi({ icon: Icon, label, value, sub, tone = "green" }) {
 }
 
 export default function SupervisorAttendance() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayISO());
   const [workers, setWorkers] = useState([]);
   const [zones, setZones] = useState([]);
   const [draft, setDraft] = useState({}); // workerId -> { status, zoneId }

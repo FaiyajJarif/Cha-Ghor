@@ -30,6 +30,7 @@ import { BTN_GHOST } from "../../lib/ui";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 import InfoTip from "../../components/admin/InfoTip";
+import { todayISO } from "../../lib/localDate";
 
 // Tea Garden Overview — the supervisor's daily picture.
 //
@@ -111,7 +112,7 @@ function Kpi({ icon: Icon, label, value, sub, tone = "green", empty }) {
 }
 
 export default function SupervisorDashboard() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   const [leaf, setLeaf] = useState([]);
   const [leafSummary, setLeafSummary] = useState(null);

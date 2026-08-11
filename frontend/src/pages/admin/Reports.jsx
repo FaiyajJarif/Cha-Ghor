@@ -31,6 +31,7 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import ReportDocument from "../../components/admin/ReportDocument";
+import { isoDate } from "../../lib/localDate";
 
 // Estate money is in Bangladeshi Taka (\u09f3).
 function taka(n) {
@@ -62,7 +63,7 @@ function monthDefaults() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const iso = (d) => d.toISOString().slice(0, 10);
+  const iso = isoDate;
   return { start: iso(start), end: iso(end) };
 }
 

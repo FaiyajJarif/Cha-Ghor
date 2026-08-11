@@ -58,17 +58,23 @@ public class SmsService {
     }
 
     // Fired by PayrollService.markPaid(...) once a payslip goes approved -> paid.
+    //
+    // THE WORD "পরিশোধ" (paid) IS GONE ON PURPOSE.
+    //
+    // This used to say "your salary of X has been paid" and, since the estate
+    // moved to daily settlement, that is not what happened. Wages reach the
+    // worker daily as they withdraw; closing the payslip only finalises the
+    // month's statement. A worker who reads "paid" and then finds nothing new
+    // in their bKash has been told a lie by the system, about the one subject
+    // where trust is the entire product.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     // IN BANGLA, because the recipient is a worker and the entire worker
-    // console is Bangla. This message used to read "Cha Ghor: Your salary of
-    // BDT 4,200 has been paid" -- English, to a Sylhet tea plucker, about the
-    // one subject where being unable to read it matters most.
-    //
-    // The amount stays in Western digits deliberately: a bKash confirmation SMS
-    // shows Western digits, and the two need to be comparable at a glance.
-    public void notifyPayrollPaid(Long workerId, BigDecimal netPay) {
-        String msg = "চা ঘর: আপনার বেতন " + money(netPay)
-                + " টাকা পরিশোধ করা হয়েছে। ধন্যবাদ।";
+    // console is Bangla. The amount stays in Western digits deliberately: a
+    // bKash confirmation SMS shows Western digits, and the two need to be
+    // comparable at a glance.
+    public void notifyPayrollClosed(Long workerId, BigDecimal netPay) {
+        String msg = "চা ঘর: এই মাসের বেতনের হিসাব চূড়ান্ত হয়েছে। মোট "
+                + money(netPay) + " টাকা। ধন্যবাদ।";
         dispatch(workerId, msg, SmsCategory.payroll);
     }
 

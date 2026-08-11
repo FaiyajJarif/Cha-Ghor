@@ -6,6 +6,7 @@ import com.chaghor.chaghor.leaf.dto.LeafRecordRequest;
 import com.chaghor.chaghor.leaf.dto.LeafResponse;
 import com.chaghor.chaghor.leaf.dto.LeafSummaryResponse;
 import com.chaghor.chaghor.leaf.dto.LeafTrendPoint;
+import com.chaghor.chaghor.leaf.dto.TopPlucker;
 import com.chaghor.chaghor.user.UserRepository;
 import com.chaghor.chaghor.worker.Worker;
 import com.chaghor.chaghor.worker.WorkerRepository;
@@ -26,6 +27,9 @@ import com.chaghor.chaghor.leaf.dto.ZonePerformance;
 import com.chaghor.chaghor.leaf.dto.YieldForecast;
 import org.springframework.data.domain.PageRequest;
 import java.util.List;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Map;
 
 // Green-leaf collection module. Records how much leaf each worker brought in
@@ -47,6 +51,9 @@ public class LeafCollectionService {
     // long average smooths away the thing you are trying to see.
     private static final int FORECAST_WINDOW_DAYS = 10;
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(LeafCollectionService.class);
+
     private final LeafCollectionRepository repo;
     private final WorkerRepository workerRepository;
     private final ZoneRepository zoneRepository;
@@ -60,6 +67,7 @@ public class LeafCollectionService {
     // Leaf weight feeds the payroll surplus, so every correction is traceable.
     private final AuditService auditService;
     private final NotificationService notifications;
+    private final com.chaghor.chaghor.settlement.SettlementRevisionService revisionService;
 
     @Transactional
     public LeafResponse record(LeafRecordRequest req, String recordedByUsername) {
@@ -103,6 +111,12 @@ public class LeafCollectionService {
         repo.save(lc);
         audit("leaf.record", lc.getId(), null, snapshot(lc));
         pushChanged(lc.getCollectDate());
+        // A NEW weigh-in can land on a day that is ALREADY SETTLED -- leaf
+        // brought in late, or a sack found the next morning. That day is now
+        // worth more than the estate recorded, and the worker is owed the
+        // difference. Only update and delete were hooked at first, which left
+        // exactly this case moving nothing.
+        reviseIfSettled(lc.getWorkerId(), lc.getCollectDate(), "Weigh-in added after settlement");
         return toResponse(lc, worker);
     }
 
@@ -141,6 +155,14 @@ public class LeafCollectionService {
         repo.save(lc);
         audit("leaf.amend", lc.getId(), before, snapshot(lc));
         pushChanged(lc.getCollectDate());
+        // If the old date differs from the new one, BOTH days changed: the day
+        // the kilos left and the day they landed on.
+        Object wasDate = before.get("date");
+        if (wasDate != null && !wasDate.toString().equals(String.valueOf(lc.getCollectDate()))) {
+            reviseIfSettled(lc.getWorkerId(), LocalDate.parse(wasDate.toString()),
+                    "Weigh-in moved to another day");
+        }
+        reviseIfSettled(lc.getWorkerId(), lc.getCollectDate(), "Weigh-in corrected");
         return toResponse(lc, workerRepository.findById(lc.getWorkerId()).orElse(null));
     }
 
@@ -157,9 +179,31 @@ public class LeafCollectionService {
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "That weigh-in could not be found."));
         Map<String, Object> before = snapshot(lc);
         LocalDate d = lc.getCollectDate();
+        Long owner = lc.getWorkerId();
         repo.delete(lc);
         audit("leaf.delete", id, before, null);
         pushChanged(d);
+        reviseIfSettled(owner, d, "Weigh-in deleted");
+    }
+
+    // A CORRECTION MUST NEVER COST THE SUPERVISOR HIS EDIT.
+    //
+    // If the day was already settled, real balances moved and have to be undone
+    // before the day can be recomputed. That work runs in its own transaction
+    // and is swallowed here on purpose: the corrected weight is the thing the
+    // supervisor came to record, and losing it to protect the accounting would
+    // be exactly backwards. A failure is logged loudly and the day shows up in
+    // "workers behind" on the Payroll card.
+    private void reviseIfSettled(Long workerId, LocalDate date, String reason) {
+        if (workerId == null || date == null) {
+            return;
+        }
+        try {
+            revisionService.onDayChanged(workerId, date, reason);
+        } catch (Exception e) {
+            log.error("[leaf] settlement revision failed for worker {} on {}: {}",
+                    workerId, date, e.toString());
+        }
     }
 
     private Map<String, Object> snapshot(LeafCollection lc) {
@@ -251,6 +295,98 @@ public class LeafCollectionService {
         return visionRepository.findById(photoId)
                 .map(com.chaghor.chaghor.vision.VisionInference::getImageUrl)
                 .orElse(null);
+    }
+
+    // One worker's weigh-ins across a date range, oldest first.
+    //
+    // This is the EVIDENCE BEHIND A PAYSLIP. The admin table showed a payslip's
+    // `totalLeafKg` as a single number and offered a Review button that only
+    // changed the status -- so "review" meant approving an aggregate with
+    // nothing to check it against. The repository method has always existed;
+    // nothing exposed it.
+    @Transactional(readOnly = true)
+    public List<LeafResponse> workerRange(Long workerId, LocalDate from, LocalDate to) {
+        LocalDate end = to != null ? to : LocalDate.now();
+        LocalDate start = from != null ? from : end.withDayOfMonth(1);
+        List<LeafCollection> rows =
+                repo.findByWorkerIdAndCollectDateBetween(workerId, start, end);
+        rows.sort(Comparator.comparing(
+                LeafCollection::getCollectDate,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+
+        // Batch the photo lookups, as listByDate does -- a month of weigh-ins
+        // would otherwise be one extra query per row.
+        Map<Long, String> photoUrls = new HashMap<>();
+        List<Long> photoIds = rows.stream()
+                .map(LeafCollection::getPhotoId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (!photoIds.isEmpty()) {
+            visionRepository.findByIdIn(photoIds)
+                    .forEach(v -> photoUrls.put(v.getId(), v.getImageUrl()));
+        }
+
+        Worker w = workerRepository.findById(workerId).orElse(null);
+        List<LeafResponse> out = new ArrayList<>();
+        for (LeafCollection lc : rows) {
+            out.add(toResponse(lc, w, photoUrls.get(lc.getPhotoId())));
+        }
+        return out;
+    }
+
+    // Who plucked the most over the last `days`, biggest first.
+    //
+    // Replaces a hardcoded leaderboard of five invented names. Names come from
+    // the worker rows, zones are resolved in memory (foreign keys here are
+    // plain Longs, never JPA relations -- CLAUDE.md section 6).
+    @Transactional(readOnly = true)
+    public List<TopPlucker> topPluckers(int days, int limit) {
+        int n = Math.max(1, Math.min(days, 90));
+        int cap = Math.max(1, Math.min(limit, 50));
+        LocalDate end = LocalDate.now();
+        LocalDate start = end.minusDays(n - 1L);
+
+        Map<Long, BigDecimal> kg = new HashMap<>();
+        Map<Long, Set<LocalDate>> daysSeen = new HashMap<>();
+        for (LeafCollection lc : repo.findByCollectDateBetween(start, end)) {
+            if (lc.getWorkerId() == null) continue;
+            kg.merge(lc.getWorkerId(), nz(lc.getWeightKg()), BigDecimal::add);
+            daysSeen.computeIfAbsent(lc.getWorkerId(), k -> new HashSet<>())
+                    .add(lc.getCollectDate());
+        }
+        if (kg.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, Worker> workers = new HashMap<>();
+        for (Worker w : workerRepository.findAll()) {
+            workers.put(w.getId(), w);
+        }
+        Map<Long, String> zones = new HashMap<>();
+        for (var z : zoneRepository.findAll()) {
+            zones.put(z.getId(), z.getName());
+        }
+
+        List<TopPlucker> out = new ArrayList<>();
+        for (var e : kg.entrySet()) {
+            Worker w = workers.get(e.getKey());
+            // A weigh-in whose worker row is gone is skipped rather than shown
+            // as a blank name on a leaderboard.
+            if (w == null) continue;
+            long d = daysSeen.getOrDefault(e.getKey(), Set.of()).size();
+            BigDecimal total = e.getValue().setScale(2, RoundingMode.HALF_UP);
+            BigDecimal avg = d == 0 ? BigDecimal.ZERO
+                    : total.divide(BigDecimal.valueOf(d), 1, RoundingMode.HALF_UP);
+            out.add(new TopPlucker(
+                    w.getId(),
+                    w.getNameBn() != null && !w.getNameBn().isBlank()
+                            ? w.getNameBn() : w.getFullName(),
+                    w.getZoneId() == null ? null : zones.get(w.getZoneId()),
+                    total, d, avg));
+        }
+        out.sort(Comparator.comparing(TopPlucker::totalKg).reversed());
+        return out.size() > cap ? out.subList(0, cap) : out;
     }
 
     // Per-day totals for the collection history chart, oldest first. Days with

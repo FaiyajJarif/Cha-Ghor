@@ -37,6 +37,7 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import AnomalyPanel from "../../components/admin/AnomalyPanel";
+import { todayISO } from "../../lib/localDate";
 
 const PAGE_SIZE = 10;
 const ACT_PAGE_SIZE = 8; // Money Movement feed
@@ -183,7 +184,7 @@ function ModalHeader({ title, subtitle, onClose }) {
 }
 
 const EMPTY_ENTRY = {
-  entryDate: new Date().toISOString().slice(0, 10),
+  entryDate: todayISO(),
   refId: "",
   category: "EXPENSE",
   account: "",

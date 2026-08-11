@@ -31,6 +31,7 @@ import LeafReviewDrawer from "../../components/admin/LeafReviewDrawer";
 import FieldManagerModal from "../../components/supervisor/FieldManagerModal";
 import { WORKER_LEADERBOARD } from "../../lib/adminSample";
 import ChaBot from "../../components/admin/ChaBot";
+import { todayISO } from "../../lib/localDate";
 
 const EMPTY = {
   id: null,
@@ -96,10 +97,6 @@ const FIELD =
   "mt-1 w-full rounded-lg border border-cg-green/20 bg-cg-lime/30 px-3 py-2 text-sm outline-none focus:border-cg-green";
 
 // apiError() is imported from ../../lib/apiError (shared, single source of truth).
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function nowTime() {
   return new Date().toLocaleTimeString([], {

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 // REST surface for the Payroll & Wage module. Method-level @PreAuthorize does
 // the RBAC, so no change to SecurityConfig is needed. Dates arrive as ISO
@@ -61,7 +62,8 @@ public class PayrollController {
     // the period from attendance. Idempotent; never overwrites non-Draft rows.
     @PostMapping("/generate")
     @PreAuthorize("hasRole('ADMIN')")
-    public List<PayrollResponse> generate(@Valid @RequestBody(required = false) GenerateRequest req) {
+    public com.chaghor.chaghor.payroll.dto.GenerateResult generate(
+            @Valid @RequestBody(required = false) GenerateRequest req) {
         LocalDate start = req != null ? req.periodStart() : null;
         LocalDate end = req != null ? req.periodEnd() : null;
         return service.generate(start, end);
@@ -89,6 +91,21 @@ public class PayrollController {
     @PreAuthorize("hasRole('ADMIN')")
     public PayrollResponse pay(@PathVariable Long id) {
         return service.markPaid(id);
+    }
+
+    // The day-by-day working behind ONE payslip: what each day earned, what
+    // each debt took, what was left.
+    //
+    // Admin-side view of the SAME computation the worker sees on their own
+    // screen (/me/worker/daily). Abdul's phone showed "11 August, 30 kg, earned
+    // ৳235, advance cut ৳215" and the admin console had no way to see any of
+    // it -- so a dispute could not be settled from the office.
+    //
+    // Reads only. The payslip's own stored figures are unaffected.
+    @GetMapping("/{id}/daily")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public Map<String, Object> daily(@PathVariable Long id) {
+        return service.dailyFor(id);
     }
 
     @GetMapping("/config")

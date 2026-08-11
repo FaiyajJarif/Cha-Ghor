@@ -18,6 +18,7 @@ import SupervisorLeaf from "./pages/supervisor/SupervisorLeaf";
 import SupervisorFields from "./pages/supervisor/SupervisorFields";
 import SupervisorWeather from "./pages/supervisor/SupervisorWeather";
 import SupervisorBroadcast from "./pages/supervisor/SupervisorBroadcast";
+import SupervisorSettings from "./pages/supervisor/SupervisorSettings";
 import WorkerLayout from "./components/worker/WorkerLayout";
 import WorkerProfile from "./pages/worker/WorkerProfile";
 import WorkerNotices from "./pages/worker/WorkerNotices";
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="fields" element={<SupervisorFields />} />
           <Route path="weather" element={<SupervisorWeather />} />
           <Route path="broadcast" element={<SupervisorBroadcast />} />
+          <Route path="settings" element={<SupervisorSettings />} />
         </Route>
 
         {/* Worker console — a worker's own data only. Bangla throughout.

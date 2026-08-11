@@ -34,6 +34,25 @@ public class WorkerService {
     private final UserRepository userRepository;
     private final ZoneRepository zoneRepository;
     private final PasswordEncoder passwordEncoder;
+    private final com.chaghor.chaghor.web.DailyLedgerService dailyLedger;
+
+    // One worker's money day by day. Admin/supervisor view of the SAME
+    // computation the worker sees, reachable without a payslip existing.
+    //
+    // A PROJECTION ONLY. Nothing here writes; loan.repaid and the advance
+    // balance move when a payslip is marked Paid, not when this is read.
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> dailyFor(Long workerId,
+                                                  java.time.LocalDate from,
+                                                  java.time.LocalDate to) {
+        Worker w = workerRepository.findById(workerId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That worker could not be found."));
+        java.time.LocalDate end = to != null ? to : java.time.LocalDate.now();
+        java.time.LocalDate start = from != null ? from : end.withDayOfMonth(1);
+        return dailyLedger.ledger(w, start, end);
+    }
+
 
     @Transactional(readOnly = true)
     public List<WorkerResponse> list(String q) {

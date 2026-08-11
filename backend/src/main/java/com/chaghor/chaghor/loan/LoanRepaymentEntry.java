@@ -49,6 +49,22 @@ public class LoanRepaymentEntry {
     @Column(name = "payroll_id")
     private Long payrollId;
 
+    // Which settled day produced this repayment, so a correction reverses the
+    // right row instead of guessing from the date. NULL for a hand-entered
+    // repayment and for anything the retired monthly path created.
+    @Column(name = "settlement_id")
+    private Long settlementId;
+
+    // A repayment cannot be un-made by deleting it or by writing a negative
+    // mirror row -- chk_loan_repayment_amount_pos forbids the second and
+    // honesty forbids the first. It is stamped reversed instead, and every sum
+    // that drives a balance filters on this being NULL.
+    @Column(name = "reversed_at")
+    private OffsetDateTime reversedAt;
+
+    @Column(name = "reversal_reason")
+    private String reversalReason;
+
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
 }

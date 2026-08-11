@@ -72,7 +72,50 @@ ROUTES = {
     "case_review": os.getenv("ROUTE_CASE_REVIEW", "gemini"),
 }
 
+# A TOTAL budget for one complete() call, NOT a per-provider one.
+#
+# THIS WAS THE BUG BEHIND "HttpTimeoutException: request timed out".
+#   complete() tries the primary provider and then the fallback, in sequence.
+#   With 60s applied to EACH, one call could legitimately run for 120s -- while
+#   every Java caller gave up between 30s and 60s. So the backend hung up
+#   partway through the fallback attempt and logged a timeout, which reads like
+#   the AI service is down when it is in fact still working.
+#
+#   Worse, it meant the fallback could never finish for a slow primary: Java's
+#   deadline always arrived first. The Ollama backup was effectively unreachable
+#   whenever it was most needed.
+#
+# Splitting the budget across the attempts keeps the whole call inside one
+# predictable ceiling, so the Java timeout is a genuine backstop instead of the
+# thing that fires first.
 TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+
+
+# VISION NEEDS ITS OWN, LARGER BUDGET.
+#
+# A sentence of text comes back in a few seconds. A photo does not:
+#   * Gemini vision is commonly 20-40s for one image
+#   * qwen2.5vl:7b running locally is routinely 40-90s, and much worse cold
+#
+# Worse, Ollama serves one model SERIALLY. A supervisor attaching photos for
+# five workers in a row puts five requests in flight; the fifth sits in a queue
+# behind the other four while its own deadline runs down. That is why the first
+# few weigh-ins graded fine and the last ones 503'd.
+#
+# Splitting a 60s text budget in half gave each provider 30s, which is simply
+# not enough for either vision path -- so both timed out and the endpoint
+# returned 503 even though nothing was broken.
+VISION_TIMEOUT = int(os.getenv("LLM_VISION_TIMEOUT_SECONDS", "150"))
+
+
+def _attempt_timeout(attempts: int, vision: bool = False) -> int:
+    """Seconds to allow ONE provider, given how many will be tried.
+
+    The budget is TOTAL for the whole complete() call, so the Java caller's
+    deadline only has to exceed one number rather than N x one number.
+    """
+    budget = VISION_TIMEOUT if vision else TIMEOUT
+    return max(10, budget // max(1, attempts))
 
 
 class LLMError(Exception):
@@ -98,18 +141,44 @@ def _with_images(messages, images):
     return msgs
 
 
-def _ollama_chat(messages, model=None, images=None):
+def _post_chat(url, payload, headers=None, json_mode=False, timeout=None):
+    """One POST, with an automatic retry that drops response_format.
+
+    WHY THE RETRY. Asking for JSON is the difference between a small local
+    model returning a clean object and returning prose with an object buried in
+    it -- which the parsers reject, producing a 502 that reads like the model
+    was never reached. But `response_format` is not universally supported: an
+    older Ollama build, or a model that does not implement it, answers 400.
+    Failing outright there would take a working provider offline for the sake
+    of a formatting hint, so the hint is dropped and the call repeated.
+    """
+    if json_mode:
+        payload = dict(payload, response_format={"type": "json_object"})
+    secs = timeout or TIMEOUT
+    r = requests.post(url, json=payload, headers=headers, timeout=secs)
+    if json_mode and r.status_code == 400:
+        print("[llm] response_format rejected; retrying without it", flush=True)
+        payload = {k: v for k, v in payload.items() if k != "response_format"}
+        r = requests.post(url, json=payload, headers=headers, timeout=secs)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _ollama_chat(messages, model=None, images=None, json_mode=False, timeout=None):
     payload = {
         "model": model or OLLAMA_MODEL,
         "messages": _with_images(messages, images),
         "temperature": 0,
     }
-    r = requests.post(f"{OLLAMA_BASE_URL}/v1/chat/completions", json=payload, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    return _post_chat(
+        f"{OLLAMA_BASE_URL}/v1/chat/completions",
+        payload,
+        json_mode=json_mode,
+        timeout=timeout,
+    )
 
 
-def _gemini_chat(messages, model=None, images=None):
+def _gemini_chat(messages, model=None, images=None, json_mode=False, timeout=None):
     if not _gemini_available():
         raise LLMError("GEMINI_API_KEY is not set")
     payload = {
@@ -117,14 +186,13 @@ def _gemini_chat(messages, model=None, images=None):
         "messages": _with_images(messages, images),
         "temperature": 0,
     }
-    r = requests.post(
+    return _post_chat(
         f"{GEMINI_BASE_URL}/chat/completions",
+        payload,
         headers={"Authorization": f"Bearer {GEMINI_API_KEY}"},
-        json=payload,
-        timeout=TIMEOUT,
+        json_mode=json_mode,
+        timeout=timeout,
     )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
 
 
 _PROVIDERS = {"ollama": _ollama_chat, "gemini": _gemini_chat}
@@ -144,16 +212,26 @@ def _describe(provider, model, e):
     return f"{provider}({model}) {type(e).__name__}: {e}"
 
 
-def complete(task: str, messages, images=None):
+def complete(task: str, messages, images=None, json_mode=False):
     """Run a chat completion for `task`, with automatic fallback.
 
     Returns (text, provider_used). Raises LLMError only if EVERY provider
     failed, and the message then lists why each one failed.
+
+    `json_mode=True` asks the provider for a JSON object. Pass it for every
+    task whose response is parsed rather than displayed. Without it the
+    fallback provider can answer perfectly well in prose and the caller still
+    fails -- which looks identical, from outside, to the fallback not working
+    at all.
     """
     primary = ROUTES.get(task, "ollama")
     order = [primary, "gemini" if primary == "ollama" else "ollama"]
     if not _gemini_available():
         order = [p for p in order if p != "gemini"] or ["ollama"]
+
+    # Split the budget across the providers that will actually be tried.
+    # `images` is what makes this a vision call, and vision gets far longer.
+    per_attempt = _attempt_timeout(len(order), vision=bool(images))
 
     errors = []
     for provider in order:
@@ -172,7 +250,16 @@ def complete(task: str, messages, images=None):
             # which read like a broken fallback when it was the wrong model.
             model = OLLAMA_VISION_MODEL
         try:
-            return _PROVIDERS[provider](messages, model=model, images=images), provider
+            return (
+                _PROVIDERS[provider](
+                    messages,
+                    model=model,
+                    images=images,
+                    json_mode=json_mode,
+                    timeout=per_attempt,
+                ),
+                provider,
+            )
         except Exception as e:  # noqa: BLE001 - try the fallback provider
             desc = _describe(provider, model or "default", e)
             print(f"[llm] task={task} provider FAILED -> {desc}", flush=True)

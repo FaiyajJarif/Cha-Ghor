@@ -40,7 +40,11 @@ public class AttendanceService {
     private final AuditService auditService;
     // Live push, so an admin watching the register sees a supervisor's marks
     // arrive without reloading.
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(AttendanceService.class);
+
     private final NotificationService notifications;
+    private final com.chaghor.chaghor.settlement.SettlementRevisionService revisionService;
     private final ZoneRepository zoneRepository;
 
     // Existing marks for a day, so the sheet can prefill what was already saved.
@@ -131,6 +135,9 @@ public class AttendanceService {
 
         List<AttendanceResponse> out = new ArrayList<>();
         int changed = 0;
+        // Only the workers whose mark actually moved. A no-op re-save must not
+        // trigger a reversal of balances that are already correct.
+        java.util.Set<Long> revised = new java.util.LinkedHashSet<>();
         for (AttendanceEntryRequest e : req.entries()) {
             if (e.workerId() == null) {
                 continue;
@@ -197,6 +204,7 @@ public class AttendanceService {
             }
             attendanceRepository.save(a);
             changed++;
+            revised.add(a.getWorkerId());
 
             Map<String, Object> after = AuditService.details(
                     "status", a.getStatus().name(),
@@ -209,6 +217,26 @@ public class AttendanceService {
 
             out.add(AttendanceResponse.applied(a.getWorkerId(), a.getWorkDate(),
                     a.getStatus().name(), a.getZoneId(), a.getLateMinutes()));
+        }
+
+        // A DAY THAT WAS ALREADY SETTLED HAS TO BE UNWOUND, NOT JUST OVERWRITTEN.
+        //
+        // Marking someone absent who was settled as present means the estate has
+        // already recovered a loan instalment against earnings that no longer
+        // exist. Only the workers actually touched are revised -- re-settling
+        // the whole register because one mark changed would churn every balance
+        // on the estate.
+        //
+        // Swallowed per worker: the register save has already committed, and a
+        // failure here must not take the supervisor's marks down with it.
+        for (Long touched : revised) {
+            try {
+                revisionService.onDayChanged(touched, req.date(),
+                        "Attendance amended for " + req.date());
+            } catch (Exception e) {
+                log.error("[attendance] settlement revision failed for worker {} on {}: {}",
+                        touched, req.date(), e.toString());
+            }
         }
 
         // One frame for the batch, not one per worker -- marking 200 people

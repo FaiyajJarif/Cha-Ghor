@@ -41,6 +41,7 @@ import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
 import FieldManagerModal from "../../components/supervisor/FieldManagerModal";
 import FieldAiPanel from "../../components/supervisor/FieldAiPanel";
 import HarvestScheduleDocument from "../../components/supervisor/HarvestScheduleDocument";
+import { todayISO } from "../../lib/localDate";
 
 // Field & Zonal Management.
 //
@@ -102,7 +103,7 @@ function MapFallback() {
 }
 
 export default function SupervisorFields() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayISO());
   const [fields, setFields] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

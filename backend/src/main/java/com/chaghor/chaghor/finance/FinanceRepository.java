@@ -15,30 +15,49 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
     // FILTER. Aliases are quoted so the column labels match the projection
     // getters exactly (Postgres would otherwise lower-case them).
     //
-    // cashOnHand: `loan_in` is NOT unconditionally an inflow. There are two
-    // kinds of loan repayment and only one of them moves cash:
-    //   * recorded by hand in the Loans UI  -> the worker really handed money
-    //     over, cash goes UP.  loan_repayment_entry.payroll_id IS NULL.
-    //   * auto-deducted from a payslip      -> nothing arrived; the estate
-    //     simply paid a smaller wage, and the PAYROLL row already carries that
-    //     reduced netPayable. Counting it again credits the same taka twice.
-    //     loan_repayment_entry.payroll_id IS NOT NULL (stamped in V20).
-    // So a wage-deducted repayment is cash-NEUTRAL here, not an inflow.
+    // cashOnHand: `loan_in` is NOT unconditionally an inflow. Only a repayment
+    // the worker physically handed over moves cash:
+    //   * recorded by hand in the Loans UI -> money really arrived, cash UP.
+    //     Both payroll_id and settlement_id are NULL.
+    //   * withheld from wages              -> nothing arrived. The estate simply
+    //     pays out less when the worker withdraws, and the withdrawal row
+    //     already carries that. Counting it again credits the same taka twice.
+    //     payroll_id IS NOT NULL (legacy monthly) OR settlement_id IS NOT NULL
+    //     (daily settlement, V35).
+    //
+    // THE settlement_id ARM WAS MISSING AND IT WAS A REAL BUG.
+    // When settlement took over loan recovery it called recover() with a null
+    // payrollId -- correctly, no payslip is involved -- and every daily ৳20
+    // deduction started being counted here as if a worker had walked into the
+    // office with notes in his hand. Cash on Hand climbed by the estate's own
+    // withholdings. The test that would have caught it is: recovering a loan
+    // from wages must not change cash on hand at all.
+    //
+    // Reversed repayments are excluded outright: a reversal means the repayment
+    // did not really happen, so neither it nor its compensating row should
+    // survive in the rollup.
+    //
     // Amounts stay positive (chk_finance_amount_nonneg, V14); direction still
     // comes from category + source_type, never from a sign.
     // A loan_in row with no matching repayment row (orphan) keeps the old
-    // inflow behaviour -- we only neutralise when payroll_id is positively set.
+    // inflow behaviour -- we only neutralise when we can positively prove the
+    // repayment came out of wages.
     @Query(value = """
         SELECT
           COALESCE(SUM(amount) FILTER (WHERE category = 'REVENUE'), 0) AS \"totalRevenue\",
           COALESCE(SUM(amount) FILTER (WHERE category IN ('EXPENSE','PAYROLL')), 0) AS \"totalExpenses\",
           COALESCE(SUM(CASE
                    WHEN category = 'REVENUE' THEN amount
-                   WHEN COALESCE(source_type, '') = 'loan_in' THEN
+                   WHEN COALESCE(source_type, '') IN ('loan_in', 'loan_in_reversal') THEN
                         CASE WHEN EXISTS (SELECT 1 FROM loan_repayment_entry r
                                            WHERE r.id = finance_ledger.source_id
-                                             AND r.payroll_id IS NOT NULL)
-                             THEN 0 ELSE amount END
+                                             AND (r.payroll_id IS NOT NULL
+                                                  OR r.settlement_id IS NOT NULL
+                                                  OR r.reversed_at IS NOT NULL))
+                             THEN 0
+                             WHEN COALESCE(source_type, '') = 'loan_in_reversal'
+                             THEN -amount
+                             ELSE amount END
                    ELSE -amount END)
                    FILTER (WHERE status = 'SETTLED'), 0) AS \"cashOnHand\",
           COALESCE(SUM(amount) FILTER (

@@ -27,6 +27,7 @@ public class SettingsController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AppSettingRepository appSettingRepository;
+    private final com.chaghor.chaghor.fieldcase.CaseAttachmentService attachments;
 
     // ---- Profile ----
     @PutMapping("/me/profile")
@@ -43,6 +44,36 @@ public class SettingsController {
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "That email is already in use.");
         }
+        return UserResponse.from(user);
+    }
+
+    // ---- Avatar ----
+
+    // Upload a profile picture for ANY signed-in account.
+    //
+    // `users.avatar_url` has existed since V3 and could only ever be set by
+    // PASTING A URL into the admin Settings form -- the comment at the top of
+    // that file says so outright ("without a file-storage service"). Nobody has
+    // a URL for a photo of themselves, so in practice the field stayed empty
+    // and every header showed an initial.
+    //
+    // Reuses CaseAttachmentService for the same reason the worker photo does:
+    // it already validates magic bytes, names files by a UUID it generates, and
+    // caps size. A second uploader would be a second place to get that wrong.
+    @PostMapping("/me/avatar")
+    public UserResponse setAvatar(@AuthenticationPrincipal AppUserDetails principal,
+                                  @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        String declared = file == null || file.getContentType() == null
+                ? "" : file.getContentType().toLowerCase();
+        // Images only. The attachment store also takes PDF and audio, which are
+        // valid there and meaningless as a profile picture.
+        if (!declared.startsWith("image/")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Please choose an image file.");
+        }
+        User user = currentUser(principal);
+        user.setAvatarUrl("/api/v1/complaints/attachments/" + attachments.store(file));
+        userRepository.save(user);
         return UserResponse.from(user);
     }
 

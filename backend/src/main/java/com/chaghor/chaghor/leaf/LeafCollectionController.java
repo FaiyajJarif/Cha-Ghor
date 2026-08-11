@@ -61,6 +61,32 @@ public class LeafCollectionController {
         return service.trend(days);
     }
 
+    // One worker's weigh-ins across a range — the evidence behind a payslip's
+    // leaf total. Feeds the admin payslip review drawer.
+    @GetMapping("/worker/{workerId}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<LeafResponse> workerRange(
+            @PathVariable Long workerId,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return service.workerRange(workerId, from, to);
+    }
+
+    // Top pluckers over a window, biggest total first.
+    //
+    // Feeds the admin Overview leaderboard, which showed five hardcoded names
+    // and an invented "score out of 100" until now. There is no score here
+    // because the system has no scoring model -- see TopPlucker.
+    @GetMapping("/top-pluckers")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<com.chaghor.chaghor.leaf.dto.TopPlucker> topPluckers(
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(defaultValue = "5") int limit) {
+        return service.topPluckers(days, limit);
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public LeafResponse record(@Valid @RequestBody LeafRecordRequest req, Authentication auth) {

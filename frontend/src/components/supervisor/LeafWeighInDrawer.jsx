@@ -528,7 +528,14 @@ export default function LeafWeighInDrawer({
                               }}
                               placeholder="0.0"
                               aria-label={`Weight for ${w.fullName}`}
-                              className="w-24 rounded-lg border border-[#13483B59] px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-cg-green"
+                              // EXPLICIT bg AND text colour. This field set
+                              // neither, so it inherited: Tailwind's preflight
+                              // gives inputs `color: inherit`, and a browser in
+                              // dark mode darkens an unstyled control's
+                              // background. The result was white-on-white — a
+                              // supervisor typing a weight they could not read,
+                              // on the one screen where the number becomes wages.
+                              className="w-24 rounded-lg border border-[#13483B59] bg-white px-2.5 py-1.5 text-sm font-semibold text-cg-ink placeholder:text-cg-ink/35 outline-none focus:border-cg-green"
                             />
                           </td>
                           <td className="px-4 py-3">

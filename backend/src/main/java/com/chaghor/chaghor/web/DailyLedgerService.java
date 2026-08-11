@@ -14,7 +14,6 @@ import com.chaghor.chaghor.payroll.PayrollConfig;
 import com.chaghor.chaghor.payroll.PayrollConfigRepository;
 import com.chaghor.chaghor.payroll.PayrollRepository;
 import com.chaghor.chaghor.payroll.PayrollStatus;
-import com.chaghor.chaghor.payroll.PendingRecoveryRepository;
 import com.chaghor.chaghor.withdrawal.WithdrawalKind;
 import com.chaghor.chaghor.withdrawal.WithdrawalRepository;
 import com.chaghor.chaghor.withdrawal.WithdrawalRequest;
@@ -39,34 +38,41 @@ import java.util.Map;
 // THIS SERVICE MOVES NO MONEY. IT IS A PROJECTION, AND THAT IS THE POINT.
 // ============================================================================
 //
-// A worker thinks in days: "I picked leaf today, what do I get, and why is it
-// less than yesterday." The payroll engine thinks in months: one payslip per
-// period, draft -> review -> approved -> paid, with `advanceRecovery` and
-// `loanDeduction` as single line items. Both are right. The gap between them is
-// what this fills.
+// This computes what a day is WORTH. DailySettlementService is what records
+// that a day has been SETTLED, and it is the only thing that moves a balance.
+// Keeping the arithmetic and the record in separate classes is deliberate: a
+// projection that also writes is how a screen refresh becomes a second
+// deduction.
 //
-// The obvious implementation -- credit each day's earnings somewhere, deduct
-// the advance daily, post it -- would be a SECOND recovery running alongside
-// the payslip's. Every taka would be taken twice: once by the daily engine and
-// once by advanceRecovery at month end. That is precisely the failure this
-// product was built to end, so the daily figures here are COMPUTED FROM THE
-// SAME ROWS the payslip is computed from, and nothing here writes.
+// THE ESTATE PAYS DAILY. It did not always: until recently the only moment
+// money moved was a monthly payslip going to `paid`, which meant the payslip
+// WAS the payment. That produced a payslip paid on the 7th for a period ending
+// the 31st, freezing 24 days of work out of payroll for good. The payslip is
+// now a statement; settlement happens per day and cash leaves when the worker
+// withdraws.
 //
-// The test that keeps it honest, verified before this was written:
+// The identity that keeps this honest:
 //
-//     sum(daily "he gets")  ==  gross - loanDeduction - advanceRecovery
+//     earned = toLoan + toAdvance + payable      for every single day
 //
-// If those ever disagree, the worker is being shown one number and paid
-// another, and this file is wrong -- not the payslip.
+// daily_settlement enforces it with a CHECK constraint rather than trusting
+// this class, because if those ever disagree the worker is being shown one
+// number and paid another.
 //
 // ---------------------------------------------------------------------------
 // ORDER OF RECOVERY
 // ---------------------------------------------------------------------------
 // From each day's earnings, in this order:
 //
-//   1. ঋণ  -- a fixed `loanDailyDeduction` (default ৳20), capped by what is
-//             still owed and by the day's earnings. The worker keeps the rest,
-//             so a loan never leaves them with nothing.
+//   1. ঋণ  -- EACH live loan takes its own `loan.daily_deduction`, capped by
+//             what that loan still owes and by the day's earnings. The worker
+//             keeps the rest, so a loan never leaves them with nothing.
+//
+//             THE RATE IS PER LOAN, not estate-wide. payroll_config's
+//             loan_daily_deduction is only the DEFAULT applied when a loan is
+//             approved. Reading the config here instead of the loan row made
+//             this screen quote ৳20/day while the payslip charged ৳75 and ৳45
+//             to different workers, with nothing explaining the gap.
 //   2. অগ্রিম -- EVERYTHING remaining, until it is clear. An advance is money
 //             borrowed against days not yet worked, so it is repaid by not
 //             being paid. This is why the cap matters: ৳500 against a ৳170 day
@@ -92,9 +98,10 @@ public class DailyLedgerService {
     private final LeafCollectionRepository leafRepository;
     private final LoanRepository loanRepository;
     private final PayrollRepository payrollRepository;
-    private final PendingRecoveryRepository pendingRecoveryRepository;
     private final PayrollConfigRepository configRepository;
     private final WithdrawalRepository withdrawalRepository;
+    private final com.chaghor.chaghor.settlement.DailySettlementRepository settlementRepository;
+    private final com.chaghor.chaghor.settlement.WageOverdrawRepository overdrawRepository;
 
     // Loans that are actually being recovered. PENDING has not been approved,
     // REJECTED never will be, REPAID is finished -- none of them touch pay.
@@ -121,10 +128,32 @@ public class DailyLedgerService {
     // ledger() instead, because the worker already has that money.
     @Transactional(readOnly = true)
     public List<Advance> openAdvances(Long workerId) {
-        // How much of this worker's advances the payslips have already taken
-        // back. A recovery only counts once its payslip is PAID -- before that
-        // the money has not actually come out of their earnings.
+        // How much of this worker's advances has already been recovered.
+        //
+        // TWO SOURCES, AND BOTH ARE REAL HISTORY:
+        //
+        //   1. daily_settlement.to_advance -- the daily model. This is where
+        //      recovery happens now: a day is settled once and its share of the
+        //      advance comes off then.
+        //   2. advanceRecovery on PAID payslips -- the old monthly model. Those
+        //      payments actually happened, so they must keep counting or every
+        //      historic advance would spring back into life as outstanding.
+        //
+        // Counting only (2) was correct until the estate moved to daily
+        // settlement; counting only (1) would resurrect settled debts from
+        // before the change.
         BigDecimal recovered = BigDecimal.ZERO;
+        for (var st : settlementRepository
+                .findByWorkerIdAndWorkDateBetweenOrderByWorkDateAsc(
+                        workerId, LocalDate.of(2000, 1, 1), LocalDate.now())) {
+            // A reversed row's recovery was undone. Counting it would leave the
+            // worker's advance looking smaller than it is, and he would be
+            // allowed to borrow against money he has not actually repaid.
+            if (st.getReversedAt() != null) {
+                continue;
+            }
+            recovered = recovered.add(nz(st.getToAdvance()));
+        }
         for (Payroll p : payrollRepository.findAll()) {
             if (!workerId.equals(p.getWorkerId())) continue;
             if (p.getStatus() != PayrollStatus.paid) continue;
@@ -197,12 +226,40 @@ public class DailyLedgerService {
     @Transactional(readOnly = true)
     public BigDecimal loanOutstanding(Long workerId) {
         BigDecimal owed = BigDecimal.ZERO;
-        for (Loan l : loanRepository.findByWorkerIdAndStatusInOrderByIdAsc(workerId, LIVE_LOANS)) {
-            owed = owed.add(nz(l.getPrincipal()).subtract(nz(l.getRepaid())));
+        for (OpenLoan l : openLoans(workerId)) {
+            owed = owed.add(l.owed());
         }
-        // A loan overpaid by a rounding taka must not read as negative credit.
-        return owed.signum() < 0 ? BigDecimal.ZERO : scale(owed);
+        return scale(owed);
     }
+
+    // Live loans, each with ITS OWN daily rate.
+    //
+    // THE RATE COMES FROM THE LOAN, NOT FROM payroll_config.
+    //   PayrollService.recompute charges the worker
+    //   `loan.daily_deduction x present days` (via LoanService.plannedDeduction).
+    //   This service used to read the estate-wide config value instead, so the
+    //   worker's daily screen quoted ৳20/day while their payslip deducted
+    //   whatever was on their loan row -- ৳75 for one worker, ৳45 for another,
+    //   with nothing on any screen explaining the difference.
+    //
+    //   payroll_config.loan_daily_deduction is the DEFAULT applied to a new
+    //   loan at approval (LoanService.decide). Once a loan exists, its own
+    //   column is the truth, because that is the number that charges.
+    @Transactional(readOnly = true)
+    public List<OpenLoan> openLoans(Long workerId) {
+        List<OpenLoan> out = new ArrayList<>();
+        for (Loan l : loanRepository.findByWorkerIdAndStatusInOrderByIdAsc(workerId, LIVE_LOANS)) {
+            BigDecimal owed = nz(l.getPrincipal()).subtract(nz(l.getRepaid()));
+            // A loan overpaid by a rounding taka must not read as credit.
+            if (owed.signum() <= 0) continue;
+            out.add(new OpenLoan(l.getId(), l.getReference(), scale(owed),
+                    scale(nz(l.getDailyDeduction()))));
+        }
+        return out;
+    }
+
+    // One live loan: what is still owed, and what it takes per working day.
+    public record OpenLoan(Long id, String reference, BigDecimal owed, BigDecimal perDay) {}
 
     // ---- the configured ceilings -------------------------------------------
 
@@ -274,8 +331,10 @@ public class DailyLedgerService {
 
         // Dated. An advance only bites from the day it was handed over.
         List<Advance> advances = openAdvances(w.getId());
-        BigDecimal loanOwed = loanOutstanding(w.getId());
-        BigDecimal loanDaily = nz(cfg.getLoanDailyDeduction());
+        // Each loan at its OWN rate -- the rate the payslip will actually use.
+        List<OpenLoan> loans = openLoans(w.getId());
+        BigDecimal[] loanLeft = loans.stream()
+                .map(OpenLoan::owed).toArray(BigDecimal[]::new);
 
         // Running debt, grown as each advance's payout date is reached rather
         // than seeded up front.
@@ -291,10 +350,53 @@ public class DailyLedgerService {
             }
         }
 
+        // WHICH DAYS ARE ALREADY SETTLED.
+        //
+        // Everything below this point is a PROJECTION -- it recomputes what a
+        // day is worth from attendance and leaf. A settled day is not a
+        // projection: it is a recorded fact, and its loan money has already
+        // moved. The two must be distinguishable on screen, because "৳20 will
+        // come off" and "৳20 came off" are different sentences to a worker
+        // waiting on money, and only one of them is safe to act on.
+        //
+        // The projection is NOT overwritten with the settled figures. If they
+        // disagree, that disagreement is itself the finding, and hiding it
+        // behind the recorded number is how a wage dispute becomes invisible.
+        // The row carries both and flags the mismatch.
+        Map<LocalDate, com.chaghor.chaghor.settlement.DailySettlement> settledByDay =
+                new LinkedHashMap<>();
+        for (var st : settlementRepository
+                .findByWorkerIdAndWorkDateBetweenOrderByWorkDateAsc(w.getId(), from, to)) {
+            // Skip reversed rows. A day corrected after settlement keeps its
+            // original row as history, and treating that as the live figure
+            // would show the worker the number that was withdrawn rather than
+            // the one that stands.
+            if (st.getReversedAt() != null) {
+                continue;
+            }
+            settledByDay.put(st.getWorkDate(), st);
+        }
+
+        // ---- overdraw: money already paid for a day later corrected down ----
+        //
+        // Recovered FOURTH -- behind loan and advance, ahead of the worker.
+        // Behind the advance on purpose: an advance is money the worker asked
+        // for and is counting on clearing, while an overdraw is the estate's
+        // own correction. Putting the estate's mistake first would stretch his
+        // zero-pay run for a reason he had no part in.
+        BigDecimal overdrawOwed = BigDecimal.ZERO;
+        for (var o : overdrawRepository.findOpenByWorker(w.getId())) {
+            overdrawOwed = overdrawOwed.add(nz(o.getAmount()).subtract(nz(o.getRecovered())));
+        }
+        overdrawOwed = floorZero(overdrawOwed);
+        BigDecimal overdrawTotal = overdrawOwed;
+
         List<Map<String, Object>> rows = new ArrayList<>();
+        int mismatches = 0;
         BigDecimal totalEarned = BigDecimal.ZERO;
         BigDecimal totalToLoan = BigDecimal.ZERO;
         BigDecimal totalToAdvance = BigDecimal.ZERO;
+        BigDecimal totalToOverdraw = BigDecimal.ZERO;
         BigDecimal totalPayable = BigDecimal.ZERO;
 
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
@@ -312,13 +414,28 @@ public class DailyLedgerService {
 
             // min() over three quantities is what makes a zero-earning day
             // deduct nothing, and stops either recovery overshooting the debt.
-            BigDecimal toLoan = min(loanDaily, min(earned, loanOwed));
-            BigDecimal left = earned.subtract(toLoan);
-            loanOwed = loanOwed.subtract(toLoan);
+            // Every live loan takes its own daily amount, in order, bounded by
+            // what the day actually earned. Matches LoanService.plannedDeduction,
+            // which caps each loan's take at its own outstanding balance.
+            BigDecimal left = earned;
+            BigDecimal toLoan = BigDecimal.ZERO;
+            for (int li = 0; li < loans.size(); li++) {
+                if (left.signum() <= 0) break;
+                BigDecimal cut = min(loans.get(li).perDay(), min(left, loanLeft[li]));
+                if (cut.signum() <= 0) continue;
+                loanLeft[li] = loanLeft[li].subtract(cut);
+                left = left.subtract(cut);
+                toLoan = toLoan.add(cut);
+            }
 
             BigDecimal toAdvance = min(left, advOwed);
             left = left.subtract(toAdvance);
             advOwed = advOwed.subtract(toAdvance);
+
+            // FOURTH: an overpayment from a day corrected after settlement.
+            BigDecimal toOverdraw = min(left, overdrawOwed);
+            left = left.subtract(toOverdraw);
+            overdrawOwed = overdrawOwed.subtract(toOverdraw);
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("date", d);
@@ -327,14 +444,44 @@ public class DailyLedgerService {
             row.put("earned", earned);
             row.put("toLoan", toLoan);
             row.put("toAdvance", toAdvance);
+            row.put("toOverdraw", toOverdraw);
             row.put("payable", left);
             row.put("advanceLeft", advOwed);
-            row.put("loanLeft", loanOwed);
+            row.put("overdrawLeft", scale(overdrawOwed));
+            BigDecimal loanRemaining = BigDecimal.ZERO;
+            for (BigDecimal b : loanLeft) loanRemaining = loanRemaining.add(b);
+            row.put("loanLeft", scale(loanRemaining));
+
+            // Settled, or still only a forecast?
+            var st2 = settledByDay.get(d);
+            row.put("settled", st2 != null);
+            if (st2 != null) {
+                row.put("settledAt", st2.getSettledAt());
+                boolean differs =
+                        scale(nz(st2.getEarned())).compareTo(scale(earned)) != 0
+                     || scale(nz(st2.getToLoan())).compareTo(scale(toLoan)) != 0
+                     || scale(nz(st2.getToAdvance())).compareTo(scale(toAdvance)) != 0
+                     || scale(nz(st2.getToOverdraw())).compareTo(scale(toOverdraw)) != 0
+                     || scale(nz(st2.getPayable())).compareTo(scale(left)) != 0;
+                if (differs) {
+                    // The recorded row is what actually moved; the projection is
+                    // what today's data says should have. A gap means attendance
+                    // or leaf was edited after the day was settled.
+                    mismatches++;
+                    row.put("mismatch", true);
+                    row.put("settledEarned", scale(nz(st2.getEarned())));
+                    row.put("settledToLoan", scale(nz(st2.getToLoan())));
+                    row.put("settledToAdvance", scale(nz(st2.getToAdvance())));
+                    row.put("settledToOverdraw", scale(nz(st2.getToOverdraw())));
+                    row.put("settledPayable", scale(nz(st2.getPayable())));
+                }
+            }
             rows.add(row);
 
             totalEarned = totalEarned.add(earned);
             totalToLoan = totalToLoan.add(toLoan);
             totalToAdvance = totalToAdvance.add(toAdvance);
+            totalToOverdraw = totalToOverdraw.add(toOverdraw);
             totalPayable = totalPayable.add(left);
         }
 
@@ -345,9 +492,20 @@ public class DailyLedgerService {
         out.put("totalEarned", scale(totalEarned));
         out.put("totalToLoan", scale(totalToLoan));
         out.put("totalToAdvance", scale(totalToAdvance));
+        out.put("totalToOverdraw", scale(totalToOverdraw));
+        // What the estate over-paid and is still working off, so a screen can
+        // say WHY today pays less rather than showing an unexplained cut.
+        out.put("overdrawOwed", scale(overdrawTotal));
+        out.put("overdrawLeft", scale(overdrawOwed));
         out.put("totalPayable", scale(totalPayable));
+        out.put("settledDays", settledByDay.size());
+        out.put("mismatchedDays", mismatches);
         out.put("advanceLeft", scale(advOwed));
-        out.put("loanLeft", scale(loanOwed));
+        BigDecimal loanRemainingTotal = BigDecimal.ZERO;
+        for (BigDecimal b : loanLeft) loanRemainingTotal = loanRemainingTotal.add(b);
+        out.put("loanLeft", scale(loanRemainingTotal));
+        // So a screen can show WHY the daily cut is what it is, per loan.
+        out.put("loans", loans);
         // Wages already handed over early in this window. Not a debt -- the
         // worker has the money -- so it is netted off the accrued balance
         // rather than withheld from any future day.

@@ -39,6 +39,7 @@ import LeafPhotoThumb from "../../components/supervisor/LeafPhotoThumb";
 import ReportLeafProblemModal from "../../components/supervisor/ReportLeafProblemModal";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
+import { todayISO } from "../../lib/localDate";
 
 // Leaf Collection — the daily weigh-in board.
 //
@@ -132,7 +133,7 @@ function MapFallback() {
 }
 
 export default function SupervisorLeaf() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const [date, setDate] = useState(today);
   const [entries, setEntries] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -543,7 +544,7 @@ export default function SupervisorLeaf() {
             <input
               type="date"
               value={date}
-              max={new Date().toISOString().slice(0, 10)}
+              max={todayISO()}
               onChange={(e) => setDate(e.target.value)}
               className="bg-transparent text-sm font-semibold text-cg-ink outline-none"
             />

@@ -32,7 +32,6 @@ public class WithdrawalService {
     private final ZoneRepository zoneRepository;
     private final com.chaghor.chaghor.sms.SmsService smsService;
     private final com.chaghor.chaghor.finance.FinanceService financeService;
-    private final com.chaghor.chaghor.payroll.PayrollService payrollService;
     private final com.chaghor.chaghor.audit.AuditService auditService;
     private final com.chaghor.chaghor.web.DailyLedgerService dailyLedger;
     private final com.chaghor.chaghor.notification.NotificationService notifications;
@@ -102,9 +101,23 @@ public class WithdrawalService {
                     ? worker.getFullName()
                     : ("Worker #" + w.getWorkerId());
             financeService.postWithdrawal(w.getId(), account, w.getAmount(), LocalDate.now());
-            payrollService.recoverAdvance(
-                    w.getWorkerId(), w.getAmount(), "withdrawal", w.getId(),
-                    "bKash " + w.getKind().name() + " #" + w.getId());
+
+            // NO recoverAdvance CALL HERE, AND THAT IS THE POINT.
+            //
+            // It used to park the amount on the worker's payslip so it would be
+            // netted off at month end. Under daily settlement that is a SECOND
+            // recovery on top of the first, and the worker pays twice:
+            //
+            //   salary  -- already netted. DailyLedgerService subtracts every
+            //              paid salary withdrawal (salaryReleased) from the
+            //              accrued balance. Adding it to a payslip as well would
+            //              take wages the worker had already been handed.
+            //   advance -- already recovered. openAdvances arms the debt from
+            //              THIS row's payout date and DailySettlementService
+            //              works it off day by day. A payslip line would recover
+            //              the same 500 a second time.
+            //
+            // Recovery now lives in exactly one place: daily_settlement.
 
             // APPROVING AN ADVANCE ALSO RELEASES WAGES ALREADY EARNED.
             //
@@ -201,10 +214,10 @@ public class WithdrawalService {
         String account = worker.getFullName() != null
                 ? worker.getFullName() : ("Worker #" + worker.getId());
         financeService.postWithdrawal(wages.getId(), account, earned, today);
-        // Recovered on the payslip like any early release, so the month still
-        // reconciles: cash out + net payable == gross.
-        payrollService.recoverAdvance(worker.getId(), earned, "withdrawal",
-                wages.getId(), "bKash wages released with advance #" + advanceId);
+        // Nothing to recover: this is the worker's OWN earned wage being handed
+        // over early, not a debt. The row is kind=salary, so salaryReleased()
+        // nets it off the accrued balance on the next read and the worker cannot
+        // draw the same taka twice. advanceId is kept only for the audit trail.
     }
 
     private WithdrawalResponse toResponse(WithdrawalRequest w, Worker known) {

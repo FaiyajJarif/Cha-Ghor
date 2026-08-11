@@ -12,6 +12,7 @@ import {
 } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
+import { todayISO } from "../../lib/localDate";
 
 // One worker's attendance for one month.
 //
@@ -129,7 +130,7 @@ export default function WorkerMonthModal({ open, workerId, workerName, onClose }
     const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
     const lead = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(); // 0 = Sunday
     const cells = Array.from({ length: lead }, () => null);
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = todayISO();
     for (let day = 1; day <= daysInMonth; day++) {
       const iso = `${data.month}-${String(day).padStart(2, "0")}`;
       cells.push({

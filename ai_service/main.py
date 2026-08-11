@@ -550,7 +550,10 @@ def leaf_grade_endpoint(req: LeafGradeRequest):
     b64 = base64.b64encode(data).decode("ascii")
     try:
         raw, provider = complete(
-            "leaf_grade", prompts.leaf_grade_messages(), images=[f"data:{ct};base64,{b64}"]
+            "leaf_grade",
+            prompts.leaf_grade_messages(),
+            images=[f"data:{ct};base64,{b64}"],
+            json_mode=True,   # json.loads'd below
         )
     except LLMError as e:
         raise HTTPException(status_code=503, detail=f"No vision model available: {e}")
@@ -628,8 +631,10 @@ def leaf_health_endpoint(req: LeafHealthRequest):
     b64 = base64.b64encode(data).decode("ascii")
     try:
         raw, provider = complete(
-            "leaf_health", prompts.leaf_health_messages(),
+            "leaf_health",
+            prompts.leaf_health_messages(),
             images=[f"data:{ct};base64,{b64}"],
+            json_mode=True,   # json.loads'd below
         )
     except LLMError as e:
         raise HTTPException(status_code=503, detail=f"No vision model available: {e}")
@@ -863,7 +868,10 @@ def anomalies_endpoint(req: AnomalyRequest):
     valid_refs = {int(r[id_key]) for r in rows if r.get(id_key) is not None}
 
     try:
-        text, provider = complete("anomaly", _anomaly_messages(scope, rows))
+        # _parse_flags reads JSON out of this, so ask for JSON.
+        text, provider = complete(
+            "anomaly", _anomaly_messages(scope, rows), json_mode=True
+        )
     except LLMError as e:
         raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
 
@@ -991,14 +999,21 @@ def loan_score_endpoint(req: LoanScoreRequest):
         raise HTTPException(status_code=400, detail="No features supplied")
     try:
         text, provider = complete(
-            "loan_score", _loan_score_messages(req.features, req.requested_amount)
+            "loan_score",
+            _loan_score_messages(req.features, req.requested_amount),
+            json_mode=True,   # parsed, not displayed
         )
     except LLMError as e:
         raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
 
     parsed = _parse_score(text, req.requested_amount)
     if parsed is None:
-        raise HTTPException(status_code=502, detail="Model returned an unusable score")
+        head = (text or "").strip().replace("\n", " ")[:200]
+        print(f"[loan-score] unparseable: {head}", flush=True)
+        raise HTTPException(
+            status_code=502,
+            detail=f"The model answered but the reply was not usable JSON: {head or '(nothing)'}",
+        )
     parsed["provider"] = provider
     return parsed
 
@@ -1135,12 +1150,30 @@ def case_review_endpoint(req: CaseReviewRequest):
         text, provider = complete(
             "case_review",
             _case_review_messages(req.case, req.candidates or [], req.categories or []),
+            # This response is PARSED, not displayed. Without asking for JSON the
+            # fallback model answers in prose, the parser rejects it, and the
+            # caller sees a 502 that is indistinguishable from "no model was
+            # reached" -- which is exactly how this was misdiagnosed as a broken
+            # Ollama fallback when the fallback had worked fine.
+            json_mode=True,
         )
     except LLMError as e:
         raise HTTPException(status_code=503, detail=f"No LLM available: {e}")
 
     parsed = _parse_case_review(text, valid_ids)
     if parsed is None:
-        raise HTTPException(status_code=502, detail="Model returned an unusable review")
+        # NAME THE PROVIDER AND SHOW WHAT IT SAID. "Model returned an unusable
+        # review" gives whoever is debugging no way to tell which provider
+        # answered, so the only way to guess was to assume the fallback was
+        # broken. 503 means nothing answered; 502 means something did.
+        head = (text or "").strip().replace("\n", " ")[:200]
+        print(f"[case-review] unparseable from {provider}: {head}", flush=True)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{provider} answered but the reply was not usable JSON. "
+                f"It said: {head or '(nothing)'}"
+            ),
+        )
     parsed["provider"] = provider
     return parsed

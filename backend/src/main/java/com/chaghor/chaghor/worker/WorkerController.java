@@ -32,6 +32,30 @@ public class WorkerController {
         return workerService.meta();
     }
 
+    // One worker's money day by day, for a date range (defaults to this month).
+    //
+    // THE SAME COMPUTATION the worker sees on their own phone, and the same one
+    // the payslip review drawer uses. Reachable WITHOUT a payslip: the office
+    // needs to answer "what did Abdul earn today" on a day when no payslip has
+    // been generated yet, which is most days.
+    //
+    // A PROJECTION. Nothing here is deducted from any balance; loan.repaid and
+    // the advance only move when a payslip is marked Paid.
+    @GetMapping("/{id}/daily")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public java.util.Map<String, Object> daily(
+            @PathVariable Long id,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate from,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate to) {
+        return workerService.dailyFor(id, from, to);
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public WorkerResponse get(@PathVariable Long id) {

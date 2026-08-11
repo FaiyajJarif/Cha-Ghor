@@ -14,6 +14,7 @@ import { apiError } from "../../lib/apiError";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 import LeafPhotoThumb from "../supervisor/LeafPhotoThumb";
+import { todayISO } from "../../lib/localDate";
 
 // Admin review of the day's weigh-ins.
 //
@@ -38,7 +39,7 @@ const GRADE_PILL = {
 const kg = (v) => (v == null ? "—" : Number(v).toFixed(1));
 
 export default function LeafReviewDrawer({ open, onClose }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayISO());
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [quota, setQuota] = useState(23);
@@ -229,7 +230,7 @@ export default function LeafReviewDrawer({ open, onClose }) {
             <input
               type="date"
               value={date}
-              max={new Date().toISOString().slice(0, 10)}
+              max={todayISO()}
               onChange={(e) => setDate(e.target.value)}
               className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-cg-ink outline-none"
             />

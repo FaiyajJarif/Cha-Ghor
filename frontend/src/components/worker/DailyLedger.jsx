@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { LuCircleCheck, LuCircleX, LuClock } from "react-icons/lu";
+import { LuCircleCheck, LuCircleX, LuClock, LuLock } from "react-icons/lu";
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 
@@ -71,8 +71,13 @@ export default function DailyLedger({ limit = 10 }) {
     <div className={`${CARD} overflow-hidden`}>
       <div className="flex flex-wrap items-center justify-between gap-2 bg-[#C0F28B] px-5 py-3">
         <h2 className="font-bold text-[#14493B]">দিনের হিসাব</h2>
+        {/* The old text read "বেতন দিলে কাটা হবে" — everything is pending
+            until payday. That stopped being true: days are settled nightly and
+            the deduction has already happened on most of this list. */}
         <span className="text-[11px] font-semibold text-[#14493B]/60">
-          নতুন আগে
+          {Number(data?.settledDays) > 0
+            ? `${bn(data.settledDays)} দিন চূড়ান্ত`
+            : "হিসাব"}
         </span>
       </div>
 
@@ -91,6 +96,9 @@ export default function DailyLedger({ limit = 10 }) {
             const toAdv = Number(d.toAdvance || 0);
             const payable = Number(d.payable || 0);
             const earned = Number(d.earned || 0);
+            // SETTLED MEANS THE MONEY ACTUALLY MOVED. An unsettled day is
+            // still a forecast and may change if the register is corrected.
+            const settled = d.settled === true;
             return (
               <li key={d.date} className="px-5 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -105,6 +113,15 @@ export default function DailyLedger({ limit = 10 }) {
                         </span>
                       )}
                       {Number(d.kg) > 0 && <span>{bn(Number(d.kg).toFixed(1))} কেজি</span>}
+                      {settled ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[#14493B]/8 px-1.5 py-px font-semibold text-[#14493B]/70">
+                          <LuLock size={9} /> চূড়ান্ত
+                        </span>
+                      ) : (
+                        <span className="font-semibold text-amber-700/80">
+                          এখনো চূড়ান্ত হয়নি
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -126,10 +143,37 @@ export default function DailyLedger({ limit = 10 }) {
                 {/* WHERE THE REST WENT. Without this line the worker sees a
                     day he worked paying ৳0 and no reason for it, which is the
                     exact complaint this whole feature answers. */}
+                {/* TENSE FOLLOWS THE FACT, NOT THE LAYOUT.
+                    "কাটা হয়েছে" (was deducted) only for a settled day, where
+                    loan.repaid really has moved. "কাটা হবে" for a day that is
+                    still a forecast. Getting this backwards is not cosmetic:
+                    the past tense once sent the office hunting for a repayment
+                    that was never going to be there, and the future tense now
+                    would tell a worker his loan is untouched when it is not. */}
                 {(toLoan > 0 || toAdv > 0) && (
                   <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 rounded-lg bg-[#F4FFE9] px-2.5 py-1.5 text-[11px] text-[#14493B]/70">
-                    {toAdv > 0 && <span>অগ্রিম কাটা {taka(toAdv)}</span>}
-                    {toLoan > 0 && <span>ঋণ কাটা {taka(toLoan)}</span>}
+                    {toAdv > 0 && (
+                      <span>
+                        অগ্রিম {taka(toAdv)} {settled ? "কাটা হয়েছে" : "কাটা হবে"}
+                      </span>
+                    )}
+                    {toLoan > 0 && (
+                      <span>
+                        ঋণ {taka(toLoan)} {settled ? "কাটা হয়েছে" : "কাটা হবে"}
+                      </span>
+                    )}
+                  </p>
+                )}
+
+                {/* The register was edited after this day was settled, so what
+                    was actually deducted no longer matches what today's data
+                    says it should have been. The worker must be told, not shown
+                    a tidy number that quietly disagrees with his loan balance. */}
+                {d.mismatch && (
+                  <p className="mt-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
+                    এই দিনের হিসাব চূড়ান্ত হওয়ার পরে তথ্য বদলেছে। চূড়ান্ত হিসাবে
+                    কাটা হয়েছিল {taka(d.settledToLoan || 0)} ঋণ ও{" "}
+                    {taka(d.settledToAdvance || 0)} অগ্রিম। অফিসে জানান।
                   </p>
                 )}
               </li>

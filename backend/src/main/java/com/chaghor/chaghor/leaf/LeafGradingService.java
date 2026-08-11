@@ -114,7 +114,17 @@ public class LeafGradingService {
 
             HttpRequest req = HttpRequest.newBuilder(URI.create(aiBaseUrl + "/leaf-grade"))
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(60))
+                    // 180s for VISION, not the 75s the text callers use.
+                    //
+                    // ai_service allows a 150s TOTAL budget for an image (see
+                    // LLM_VISION_TIMEOUT_SECONDS): a photo takes 20-40s on
+                    // Gemini and 40-90s on the local 7B vision model, and
+                    // Ollama serves them one at a time, so several weigh-ins in
+                    // a row queue up. This must stay ABOVE that budget or the
+                    // backend hangs up while the fallback is still working --
+                    // which is exactly what produced a 503 on the last two
+                    // photos of a batch while the first four graded fine.
+                    .timeout(Duration.ofSeconds(180))
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
                     .build();
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());

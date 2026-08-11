@@ -35,19 +35,22 @@ public class LoanService {
     private final FinanceService financeService;
     private final com.chaghor.chaghor.audit.AuditService auditService;
     private final com.chaghor.chaghor.notification.NotificationService notifications;
+    private final com.chaghor.chaghor.payroll.PayrollConfigRepository configRepository;
 
     public LoanService(LoanRepository repo,
                        com.chaghor.chaghor.worker.WorkerRepository workerRepository,
                        LoanRepaymentEntryRepository repaymentRepository,
                        FinanceService financeService,
                        com.chaghor.chaghor.audit.AuditService auditService,
-                       com.chaghor.chaghor.notification.NotificationService notifications) {
+                       com.chaghor.chaghor.notification.NotificationService notifications,
+                       com.chaghor.chaghor.payroll.PayrollConfigRepository configRepository) {
         this.repo = repo;
         this.workerRepository = workerRepository;
         this.repaymentRepository = repaymentRepository;
         this.financeService = financeService;
         this.auditService = auditService;
         this.notifications = notifications;
+        this.configRepository = configRepository;
     }
 
     @Transactional(readOnly = true)
@@ -116,8 +119,13 @@ public class LoanService {
             case "approve" -> {
                 loan.setStatus(LoanStatus.ACTIVE);
                 loan.setReference(mintReference(loan.getId()));
+                // Default to the ESTATE'S configured rate, not a hardcoded
+                // ten. payroll_config.loan_daily_deduction (V32) is the number
+                // the admin sets and the worker's screen quotes; a loan
+                // silently approved at 10/day made the two disagree for the
+                // life of that loan.
                 if (nz(loan.getDailyDeduction()).signum() <= 0) {
-                    loan.setDailyDeduction(BigDecimal.TEN);
+                    loan.setDailyDeduction(configuredDailyDeduction());
                 }
                 // v10: a loan approved for a name that never matched a worker row
                 // could never be auto-deducted from wages. Try again at approval
@@ -220,6 +228,19 @@ public class LoanService {
     // dailyDeduction x present days, capped at what is actually still owed so a
     // long month can never over-recover.
     @Transactional(readOnly = true)
+    // The estate default for a new loan. Falls back to ten only if no config
+    // row exists at all, which is the pre-V32 behaviour.
+    private BigDecimal configuredDailyDeduction() {
+        try {
+            return configRepository.findTopByOrderByEffectiveFromDescIdDesc()
+                    .map(c -> nz(c.getLoanDailyDeduction()))
+                    .filter(v -> v.signum() > 0)
+                    .orElse(BigDecimal.TEN);
+        } catch (Exception e) {
+            return BigDecimal.TEN;
+        }
+    }
+
     public BigDecimal plannedDeduction(Long workerId, int presentDays) {
         if (workerId == null || presentDays <= 0) {
             return BigDecimal.ZERO;
@@ -236,17 +257,27 @@ public class LoanService {
         return total.setScale(2, RoundingMode.HALF_UP);
     }
 
-    // Settle the wage deduction against real loans, oldest debt first. Called
-    // once, when a payslip is marked PAID -- that is the moment the worker has
-    // genuinely handed the money back. Creates a repayment entry per loan and
-    // posts each one to the ledger as capital returning (loan_in).
+    // Recover `amount` across this worker's outstanding loans.
     //
-    // Idempotent per payslip: the (loan_id, payroll_id) partial unique index
-    // plus the exists check below mean re-running can never double-recover.
-    // Returns the amount actually applied, which can be less than requested if
-    // the loans were repaid by hand in the meantime.
+    // `note` is what appears on the repayment row, so the audit trail says
+    // where the money actually came from. Passing a payslip id used to be the
+    // only caller, and the note was hardcoded to "Auto-deducted from payslip
+    // #null" for anything else -- a repayment whose own record lied about its
+    // origin.
     @Transactional
-    public BigDecimal recoverFromPayslip(Long workerId, BigDecimal amount, LocalDate on, Long payrollId) {
+    public BigDecimal recover(Long workerId, BigDecimal amount, LocalDate on,
+                              Long payrollId, String note) {
+        return recover(workerId, amount, on, payrollId, null, note);
+    }
+
+    // settlementId STAMPS WHICH DAY THIS CAME FROM, and it is not decoration:
+    //   * a correction to that day has to reverse exactly these rows, and
+    //     matching on the date alone would undo the wrong repayment;
+    //   * the cashOnHand rollup uses it to tell a repayment WITHHELD from wages
+    //     (no cash arrived) from one a worker handed over in notes. Before it
+    //     existed, every daily deduction was being counted as an inflow.
+    public BigDecimal recover(Long workerId, BigDecimal amount, LocalDate on,
+                              Long payrollId, Long settlementId, String note) {
         BigDecimal remaining = nz(amount);
         if (workerId == null || remaining.signum() <= 0) {
             return BigDecimal.ZERO;
@@ -269,8 +300,10 @@ public class LoanService {
                     .loanId(l.getId())
                     .amount(take)
                     .paidOn(date)
-                    .note("Auto-deducted from payslip #" + payrollId)
+                    .note(note != null ? note
+                            : ("Recovered from the day's earnings on " + date))
                     .payrollId(payrollId)
+                    .settlementId(settlementId)
                     .build());
 
             l.setRepaid(nz(l.getRepaid()).add(take));
@@ -286,6 +319,81 @@ public class LoanService {
             applied = applied.add(take);
         }
         return applied;
+    }
+
+    // ---- undoing a recovery that should not have happened --------------------
+
+    // Reverse every loan repayment that a given settled day produced.
+    //
+    // Called when a weigh-in or attendance mark is corrected AFTER the day was
+    // settled. By then loan.repaid has already moved and a loan_in row is in
+    // the ledger, so the day cannot simply be recomputed -- the old money has
+    // to be un-moved first.
+    //
+    // NOTHING IS DELETED. The repayment row is stamped reversed and a
+    // compensating ledger row is posted beside the original. Deleting would
+    // leave a loan balance that no longer matches its own repayment history,
+    // and would look exactly like somebody removing a number they disliked.
+    //
+    // Idempotent: rows already stamped are skipped, and the compensating
+    // posting is guarded on (loan_in_reversal, repaymentId). Reversing the same
+    // day twice does nothing the second time.
+    //
+    // Returns how much was un-repaid, for the caller's audit line.
+    @Transactional
+    public BigDecimal reverseRecovery(Long settlementId, String reason) {
+        if (settlementId == null) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal undone = BigDecimal.ZERO;
+        OffsetDateTime now = OffsetDateTime.now();
+
+        for (LoanRepaymentEntry entry
+                : repaymentRepository.findBySettlementIdAndReversedAtIsNull(settlementId)) {
+            Loan l = repo.findById(entry.getLoanId()).orElse(null);
+            if (l == null) {
+                // The loan is gone but the repayment row is not. Stamp it so it
+                // stops counting, and say so -- silently skipping would leave a
+                // live repayment against nothing.
+                entry.setReversedAt(now);
+                entry.setReversalReason("Loan row missing; " + safe(reason));
+                repaymentRepository.save(entry);
+                continue;
+            }
+
+            BigDecimal amount = nz(entry.getAmount());
+
+            // floorZero because repaid must never go negative, even if the data
+            // is already inconsistent. A negative repaid would read as the
+            // estate owing the worker their own loan back.
+            BigDecimal back = nz(l.getRepaid()).subtract(amount);
+            l.setRepaid(back.signum() < 0 ? BigDecimal.ZERO : back);
+
+            // Un-repaying can REOPEN a closed loan. Leaving it REPAID would
+            // exclude it from every future recovery, and the balance would sit
+            // there forever with nothing paying it down.
+            if (l.getStatus() == LoanStatus.REPAID
+                    && nz(l.getRepaid()).compareTo(nz(l.getPrincipal())) < 0) {
+                l.setStatus(LoanStatus.ACTIVE);
+            }
+            repo.save(l);
+
+            entry.setReversedAt(now);
+            entry.setReversalReason(safe(reason));
+            repaymentRepository.save(entry);
+
+            financeService.postLoanRepaymentReversal(entry.getId(), l.getReference(),
+                    l.getWorkerName(), amount, entry.getPaidOn(), reason);
+
+            undone = undone.add(amount);
+        }
+        return undone;
+    }
+
+    private static String safe(String reason) {
+        return (reason == null || reason.isBlank())
+                ? "The day this came from was corrected after settlement."
+                : reason;
     }
 
     // ---- helpers ----

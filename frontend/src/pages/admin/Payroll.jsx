@@ -28,6 +28,7 @@ import {
   LuTrendingDown,
   LuActivity,
   LuCalendarDays,
+  LuTriangleAlert,
 } from "react-icons/lu";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
@@ -38,6 +39,8 @@ import WithdrawalsPanel from "../../components/admin/WithdrawalsPanel";
 import AnomalyPanel from "../../components/admin/AnomalyPanel";
 import SmsLogPanel from "../../components/admin/SmsLogPanel";
 import PayslipDocument from "../../components/admin/PayslipDocument";
+import PayslipReviewDrawer from "../../components/admin/PayslipReviewDrawer";
+import { monthStartISO, monthEndISO } from "../../lib/localDate";
 
 const GREEN = "#3f8f43";
 
@@ -95,16 +98,6 @@ function taka(n) {
   return (
     "৳" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })
   );
-}
-function monthStartISO() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-}
-function monthEndISO() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0)
-    .toISOString()
-    .slice(0, 10);
 }
 function workerCode(id) {
   return "#CG" + String(id).padStart(3, "0");
@@ -200,10 +193,14 @@ export default function Payroll() {
   const [notice, setNotice] = useState("");
 
   const [tab, setTab] = useState("payslips");
+  const [settlement, setSettlement] = useState(null);
+  const [settling, setSettling] = useState(false);
+  const [settleNote, setSettleNote] = useState("");
   // v10: payslip PDF preview, and advances still waiting to be recovered.
   const [printRows, setPrintRows] = useState(null);
   const [pending, setPending] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [nameQuery, setNameQuery] = useState("");
   const [page, setPage] = useState(1);
 
   const [editRow, setEditRow] = useState(null);
@@ -215,6 +212,8 @@ export default function Payroll() {
   const [savingDed, setSavingDed] = useState(false);
   const [dedErr, setDedErr] = useState("");
 
+  const [reviewRow, setReviewRow] = useState(null);
+  const [skipped, setSkipped] = useState([]);
   const [cfgOpen, setCfgOpen] = useState(false);
   const [cfgDraft, setCfgDraft] = useState(null);
   const [savingCfg, setSavingCfg] = useState(false);
@@ -224,16 +223,21 @@ export default function Payroll() {
     setLoading(true);
     setError("");
     try {
-      const [listRes, trendRes, cfgRes, pendRes] = await Promise.all([
+      const [listRes, trendRes, cfgRes, pendRes, setlRes] = await Promise.all([
         api.get("/payroll", { params: { periodStart, periodEnd } }),
         api.get("/payroll/trend", { params: { limit: 14 } }),
         api.get("/payroll/config"),
         api.get("/payroll/pending-recoveries"),
+        // Settlement is the thing that actually moves money now, so its state
+        // belongs on the same screen as the payslips. Failing softly: a broken
+        // status call must not blank the whole payroll page.
+        api.get("/settlement/status").catch(() => ({ data: null })),
       ]);
       setRows(listRes.data);
       setTrend(trendRes.data);
       setConfig(cfgRes.data);
       setPending(pendRes.data);
+      setSettlement(setlRes.data);
     } catch (err) {
       setError(
         apiError(
@@ -253,13 +257,14 @@ export default function Payroll() {
     setPage(1);
   }, [statusFilter, periodStart, periodEnd]);
 
-  const filtered = useMemo(
-    () =>
-      statusFilter === "all"
-        ? rows
-        : rows.filter((r) => r.status === statusFilter),
-    [rows, statusFilter],
-  );
+  const filtered = useMemo(() => {
+    const q = nameQuery.trim().toLowerCase();
+    return rows.filter(
+      (r) =>
+        (statusFilter === "all" || r.status === statusFilter) &&
+        (!q || (r.workerName || "").toLowerCase().includes(q)),
+    );
+  }, [rows, statusFilter, nameQuery]);
 
   const totals = useMemo(() => {
     const t = {
@@ -320,6 +325,40 @@ export default function Payroll() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  // Run settlement now. Safe to press twice: daily_settlement is UNIQUE on
+  // (worker_id, work_date), so a second run settles nothing a second time.
+  // Rows whose register has moved since they were built. Derived, not fetched:
+  // the flag rides along on every payslip in the list.
+  const staleRows = rows.filter((r) => r.stale);
+
+  const runSettlement = async () => {
+    setSettling(true);
+    setSettleNote("");
+    setError("");
+    try {
+      const { data } = await api.post("/settlement/run");
+      const days = Number(data?.daysSettled || 0);
+      const workers = Number(data?.workersSettled || 0);
+      const failures = data?.failures || [];
+      setSettleNote(
+        days === 0
+          ? "Nothing to settle — every completed day is already recorded."
+          : `Settled ${days} day${days === 1 ? "" : "s"} across ${workers} worker${
+              workers === 1 ? "" : "s"
+            }.` +
+            (failures.length
+              ? ` ${failures.length} could not be settled: ${failures.join(", ")}.`
+              : "")
+      );
+      // Loan balances have moved, so the payslips on screen are stale.
+      await load();
+    } catch (err) {
+      setError(apiError(err, "Could not run settlement."));
+    } finally {
+      setSettling(false);
+    }
+  };
+
   const generate = async () => {
     setBusy(true);
     setNotice("");
@@ -329,13 +368,27 @@ export default function Payroll() {
         periodStart,
         periodEnd,
       });
-      setRows(data);
+      // The response now carries who was LEFT OUT as well as who got a
+      // payslip. Generate used to skip any worker whose status is not "active"
+      // and say nothing at all, so a worker who turned up and weighed in leaf
+      // could be missing from the pay run with no way to notice.
+      const built = data?.payslips || [];
+      const skipped = data?.skipped || [];
+      setRows(built);
+      setSkipped(skipped);
       const trendRes = await api.get("/payroll/trend", {
         params: { limit: 14 },
       });
       setTrend(trendRes.data);
+      const worked = skipped.filter((s) => s.workedInPeriod);
       setNotice(
-        `Pay run applied: ${data.length} draft payslip(s) built/refreshed from attendance. Rows already in Review/Approved/Paid were left untouched.`,
+        `Pay run applied: ${built.length} draft payslip(s) built/refreshed from attendance. ` +
+          `Rows already in Review/Approved/Paid were left untouched.` +
+          (skipped.length
+            ? ` ${skipped.length} worker(s) skipped${
+                worked.length ? ` — ${worked.length} of them worked in this period.` : "."
+              }`
+            : ""),
       );
     } catch (err) {
       setError(apiError(err, "Could not apply the pay run."));
@@ -349,6 +402,9 @@ export default function Payroll() {
     setError("");
     try {
       await api.post(`/payroll/${row.id}/${path}`);
+      // Close the review drawer once the stage has actually moved, so it can
+      // never sit open showing the previous status.
+      setReviewRow(null);
       await load();
     } catch (err) {
       setError(apiError(err, fallback));
@@ -372,8 +428,9 @@ export default function Payroll() {
     setDedErr("");
     try {
       await api.put(`/payroll/${editRow.id}/deductions`, {
-        loanDeduction: Number(ded.loanDeduction) || 0,
-        advanceRecovery: Number(ded.advanceRecovery) || 0,
+        // loanDeduction and advanceRecovery are derived server-side and
+        // ignored by PUT /payroll/{id}/deductions. Not sent, so the request
+        // says what it means.
         otherDeduction: Number(ded.otherDeduction) || 0,
       });
       setEditRow(null);
@@ -497,6 +554,29 @@ export default function Payroll() {
         })}
       </div>
 
+      {/* WHO WAS LEFT OUT. A worker skipped by the pay run while their own
+          register says they turned up is unpaid work — the single failure this
+          product exists to prevent. It gets its own panel, not a footnote. */}
+      {skipped.some((s) => s.workedInPeriod) && (
+        <div className="rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-200">
+          <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
+            <LuTriangleAlert size={16} />
+            {skipped.filter((s) => s.workedInPeriod).length} worker(s) worked
+            this period but got no payslip
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-xs text-amber-800">
+            {skipped
+              .filter((s) => s.workedInPeriod)
+              .map((s) => (
+                <li key={s.workerId}>
+                  <b>{s.workerName}</b> — {s.reason} Set their status to
+                  &ldquo;active&rdquo; in Workforce and run the pay run again.
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+
       {notice && (
         <div className="rounded-lg bg-cg-lime px-4 py-2 text-sm text-cg-green">
           {notice}
@@ -510,20 +590,26 @@ export default function Payroll() {
 
       {tab === "payslips" && (
         <>
-      {/* v10: advances paid out that no payslip has absorbed yet. Money that
-          left the estate must never be invisible, so it is surfaced here until
-          a generated payslip deducts it. */}
+      {/* LEGACY BANNER. Read the note below before trusting the number.
+          These rows were parked by the old monthly model when an advance had no
+          editable payslip to land on. Daily settlement recovers an advance from
+          the withdrawal row itself, so the SAME advances are already being
+          worked off — the count here is history, not outstanding debt, and
+          nothing writes new rows. It said "click Generate and they will be
+          deducted automatically", which is now simply untrue. */}
       {pending && pending.count > 0 && (
-        <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
-          <p className="text-sm font-semibold text-amber-900">
-            {pending.count} advance{pending.count === 1 ? "" : "s"} worth{" "}
-            {taka(pending.total)} not recovered yet
+        <div className="rounded-2xl bg-white p-4 ring-1 ring-cg-green/15">
+          <p className="text-sm font-semibold text-cg-ink/80">
+            {pending.count} legacy advance{pending.count === 1 ? "" : "s"} worth{" "}
+            {taka(pending.total)} from the old monthly model
           </p>
-          <p className="mt-1 text-sm text-amber-800">
-            These were paid out while the worker had no editable payslip. Click
-            Generate for this period and they will be deducted automatically.
+          <p className="mt-1 text-sm text-cg-ink/60">
+            Not outstanding. These were parked when an advance had no editable
+            payslip to land on. Advances are now recovered daily from the
+            withdrawal itself, so these same amounts are already being worked
+            off — do not deduct them a second time.
           </p>
-          <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
+          <ul className="mt-2 space-y-0.5 text-xs text-cg-ink/55">
             {pending.items.slice(0, 5).map((it) => (
               <li key={it.id}>
                 {it.workerName} — {taka(it.amount)}
@@ -536,6 +622,112 @@ export default function Payroll() {
           </ul>
         </div>
       )}
+
+      {/* THE REGISTER MOVED AFTER THESE WERE BUILT.
+          Surfaced at the top rather than only as row badges, because the whole
+          point is that nobody was looking. Regenerating is safe: a payslip is a
+          statement, it holds up no money, and generate() no longer freezes. */}
+      {staleRows.length > 0 && (
+        <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
+          <p className="text-sm font-semibold text-amber-900">
+            {staleRows.length} payslip{staleRows.length === 1 ? " is" : "s are"} out of
+            date — the register changed after {staleRows.length === 1 ? "it was" : "they were"} generated
+          </p>
+          <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
+            {staleRows.slice(0, 6).map((r) => (
+              <li key={r.id}>
+                <span className="font-semibold">{r.workerName}</span>
+                {r.staleReason ? " — " + r.staleReason : ""}
+                {r.status === "paid" && (
+                  <span className="ml-1 font-bold">
+                    (already closed — the figures on record are wrong)
+                  </span>
+                )}
+              </li>
+            ))}
+            {staleRows.length > 6 && <li>and {staleRows.length - 6} more</li>}
+          </ul>
+          {isAdmin && (
+            <button
+              onClick={generate}
+              className={`${BTN_DARK} mt-3`}
+              disabled={busy}
+            >
+              <LuPlay size={16} /> Rebuild these payslips
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ===================================================================
+          DAILY SETTLEMENT — the thing that actually moves money now.
+          ===================================================================
+          It runs on a schedule at 00:30. This card exists because a schedule
+          you cannot see is a schedule you cannot trust, and because a demo,
+          a restarted server or a missed night must not leave a worker's loan
+          frozen until tomorrow. */}
+      <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold text-cg-ink">Daily settlement</h2>
+            <InfoTip text="Wages are settled per day, not per payslip. Settlement records each completed day and moves the loan and advance balances. Today is never settled — leaf can still be weighed in. Running it twice is harmless." />
+          </div>
+          {isAdmin && (
+            <button
+              onClick={runSettlement}
+              className={BTN_DARK}
+              disabled={settling}
+            >
+              <LuPlay size={16} />{" "}
+              {settling ? "Settling…" : "Run settlement now"}
+            </button>
+          )}
+        </div>
+
+        {settlement ? (
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <RateField
+              label="Last closed day"
+              value={settlement.lastClosedDay || "—"}
+              unit=""
+            />
+            <RateField
+              label="Workers settled for it"
+              value={`${settlement.settledYesterday ?? 0} / ${
+                settlement.activeWorkers ?? 0
+              }`}
+              unit=""
+            />
+            <RateField
+              label="Workers behind"
+              value={String(settlement.workersBehind ?? 0)}
+              unit=""
+            />
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-cg-ink/50">
+            Settlement status unavailable.
+          </p>
+        )}
+
+        {/* A worker who is behind is a worker whose loan is not being repaid
+            and whose screen still says "will be deducted". Not a warning to
+            bury in a log. */}
+        {settlement && Number(settlement.workersBehind) > 0 && (
+          <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+            {settlement.workersBehind} worker
+            {Number(settlement.workersBehind) === 1 ? " is" : "s are"} not
+            settled up to {settlement.lastClosedDay}. Their loan and advance
+            balances have not moved for those days.
+          </p>
+        )}
+
+        {settleNote && (
+          <p className="mt-3 rounded-xl bg-cg-lime/25 px-3 py-2 text-sm text-cg-ink/75">
+            {settleNote}
+          </p>
+        )}
+      </div>
 
       {/* Today's Operating Rates */}
       <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
@@ -802,6 +994,20 @@ export default function Payroll() {
                 className="rounded-lg border border-cg-green/30 bg-white px-2 py-1 text-sm outline-none"
               />
             </label>
+            {/* SEARCH BY NAME. The table shows 8 rows a page with no way to
+                look one person up, so "is Abdul's payslip here?" meant paging
+                through the estate. A missing worker and a worker on page 3 look
+                identical without this. */}
+            <input
+              value={nameQuery}
+              onChange={(e) => {
+                setNameQuery(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Find a worker…"
+              aria-label="Find a worker by name"
+              className="rounded-lg border border-cg-green/30 bg-white px-3 py-1 text-sm text-cg-ink outline-none focus:border-cg-green"
+            />
             <span className="flex items-center gap-1 text-xs font-semibold text-cg-ink/70">
               <LuFilter size={14} /> Status
             </span>
@@ -878,18 +1084,43 @@ export default function Payroll() {
                   const editable =
                     r.status === "draft" || r.status === "review";
                   return (
-                    <tr key={r.id} className="hover:bg-cg-lime/20">
+                    <tr
+                      key={r.id}
+                      className={
+                        r.stale ? "bg-amber-50/70 hover:bg-amber-50" : "hover:bg-cg-lime/20"
+                      }
+                    >
                       <td className="px-4 py-3 font-mono text-xs text-cg-ink/70">
                         {workerCode(r.workerId)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-cg-ink">
-                          {r.workerName}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-cg-ink">
+                            {r.workerName}
+                          </span>
+                          {/* WHOSE DATA MOVED, ON THE ROW ITSELF.
+                              A supervisor amends a weigh-in and this payslip is
+                              instantly out of date, but nothing on the page said
+                              so — the admin was reading a figure the register no
+                              longer agreed with and had no way to tell. */}
+                          {r.stale && (
+                            <span
+                              title={r.staleReason || "The register changed after this was generated."}
+                              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 ring-1 ring-amber-300"
+                            >
+                              <LuTriangleAlert size={10} /> Out of date
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-cg-ink/50">
                           {ROLE_LABEL[r.jobRole] || "—"}
                           {r.zoneName ? " • " + r.zoneName : ""}
                         </div>
+                        {r.stale && (
+                          <div className="mt-0.5 text-[11px] text-amber-800">
+                            {r.staleReason}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">{r.presentDays}</td>
                       <td className="px-4 py-3 text-right">
@@ -932,11 +1163,13 @@ export default function Payroll() {
                               <LuPencil size={15} />
                             </button>
                           )}
+                          {/* REVIEW OPENS THE EVIDENCE. It used to post the
+                              transition straight away, so "review" moved a
+                              payslip toward payment without showing anything to
+                              review. The drawer carries the Submit button. */}
                           {isAdmin && r.status === "draft" && (
                             <button
-                              onClick={() =>
-                                act(r, "review", "Could not submit for review.")
-                              }
+                              onClick={() => setReviewRow(r)}
                               className={BTN_DARK}
                               disabled={busy}
                             >
@@ -945,9 +1178,7 @@ export default function Payroll() {
                           )}
                           {isAdmin && r.status === "review" && (
                             <button
-                              onClick={() =>
-                                act(r, "approve", "Could not approve.")
-                              }
+                              onClick={() => setReviewRow(r)}
                               className={BTN_DARK}
                               disabled={busy}
                             >
@@ -982,6 +1213,11 @@ export default function Payroll() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 bg-[#D3FFAC] px-4 py-2 text-sm text-cg-ink/70">
           <span>
+            {(nameQuery || statusFilter !== "all") && rows.length !== filtered.length ? (
+              <span className="mr-2 rounded bg-amber-100 px-2 py-0.5 text-amber-800">
+                filtered from {rows.length}
+              </span>
+            ) : null}
             Showing {filtered.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}–
             {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} •
             Net{" "}
@@ -1018,6 +1254,13 @@ export default function Payroll() {
 
       {/* v10: payslip PDF. Browser print -> "Save as PDF" beats bundling a
           PDF library: no dependency, smaller file, selectable text. */}
+      <PayslipReviewDrawer
+        row={reviewRow}
+        busy={busy}
+        onClose={() => setReviewRow(null)}
+        onAdvance={act}
+      />
+
       {printRows && (
         <PayslipDocument
           rows={printRows}
@@ -1045,36 +1288,57 @@ export default function Payroll() {
               />
               <div className="p-6">
                 <p className="text-xs text-cg-ink/50">
-                  Net pay updates automatically as you change these.
+                  Net pay updates automatically when you save.
                 </p>
                 {dedErr && (
                   <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                     {dedErr}
                   </div>
                 )}
+                {/* LOAN AND ADVANCE ARE NO LONGER TYPED IN.
+                    They are the sum of what daily settlement actually took, so
+                    a hand-typed value would be silently overwritten by the next
+                    Apply to Pay Run. An input that looks editable, saves without
+                    complaint and then reverts is worse than no input at all —
+                    so they are shown as read-only figures with their source. */}
                 <div className="mt-4 space-y-3">
-                  {[
-                    ["loanDeduction", "Loan repayment (৳)"],
-                    ["advanceRecovery", "Advance recovery (৳)"],
-                    ["otherDeduction", "Other deduction (৳)"],
-                  ].map(([key, label]) => (
-                    <label
-                      key={key}
-                      className="block text-sm font-semibold text-cg-ink/70"
-                    >
-                      {label}
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={ded[key]}
-                        onChange={(e) =>
-                          setDed((d) => ({ ...d, [key]: e.target.value }))
-                        }
-                        className={FIELD}
-                      />
-                    </label>
-                  ))}
+                  <div className="rounded-xl bg-cg-lime/20 p-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-semibold text-cg-ink/70">
+                        Loan repayment
+                      </span>
+                      <span className="font-bold tabular-nums text-cg-ink">
+                        {taka(ded.loanDeduction)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-sm">
+                      <span className="font-semibold text-cg-ink/70">
+                        Advance recovery
+                      </span>
+                      <span className="font-bold tabular-nums text-cg-ink">
+                        {taka(ded.advanceRecovery)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[11px] leading-relaxed text-cg-ink/55">
+                      Totalled from daily settlement — these are what was
+                      actually deducted, day by day. To change them, correct the
+                      attendance or leaf record and run settlement again.
+                    </p>
+                  </div>
+
+                  <label className="block text-sm font-semibold text-cg-ink/70">
+                    Other deduction (৳)
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={ded.otherDeduction}
+                      onChange={(e) =>
+                        setDed((d) => ({ ...d, otherDeduction: e.target.value }))
+                      }
+                      className={FIELD}
+                    />
+                  </label>
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-cg-green/10 px-6 py-4">

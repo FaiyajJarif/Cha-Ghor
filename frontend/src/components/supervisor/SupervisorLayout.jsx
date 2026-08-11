@@ -3,6 +3,7 @@ import { LuSearch } from "react-icons/lu";
 import SupervisorSidebar from "./SupervisorSidebar";
 import ChaBot from "../admin/ChaBot";
 import NotificationBell from "../admin/NotificationBell";
+import UserAvatar from "../UserAvatar";
 import OfflineBanner from "../OfflineBanner";
 import { useAuth } from "../../context/AuthContext";
 
@@ -52,6 +53,14 @@ export default function SupervisorLayout() {
               </p>
               <p className="text-xs leading-tight text-cg-ink/60">Supervisor</p>
             </div>
+            {/* Blob-fetched for uploaded avatars, direct for pasted URLs —
+                see UserAvatar. */}
+            <UserAvatar
+              src={user?.avatarUrl}
+              name={user?.displayName || user?.username}
+              size={38}
+              className="ring-2 ring-white/60"
+            />
           </div>
         </header>
         <main className="flex-1 p-6">

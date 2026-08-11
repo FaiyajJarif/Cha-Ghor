@@ -67,13 +67,23 @@ export default function SupervisorSidebar() {
       </nav>
 
       <div className="space-y-2 border-t border-cg-dark/15 px-3 py-4">
+        {/* Settings sits beside logout, not in the nav above — this slot was
+            already reserved by a dead "Settings coming with the supervisor
+            screens" label. Same placement as the worker console. */}
+        <NavLink
+          to="/supervisor/settings"
+          end
+          className={({ isActive }) =>
+            `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+              isActive ? "bg-cg-dark text-white" : "text-cg-ink/80 hover:bg-white/40"
+            }`
+          }
+        >
+          <LuSettings size={18} /> Settings
+        </NavLink>
         <button onClick={signOut} className={BTN_DARK + " w-full"}>
           <LuLogOut size={16} /> Log Out
         </button>
-        <p className="px-1 text-center text-[10px] text-cg-ink/40">
-          <LuSettings size={10} className="mr-1 inline" />
-          Settings coming with the supervisor screens
-        </p>
       </div>
     </aside>
   );

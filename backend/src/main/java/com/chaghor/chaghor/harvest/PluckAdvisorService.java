@@ -219,7 +219,16 @@ public class PluckAdvisorService {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(aiBaseUrl + "/pluck-advice"))
                 .header("Content-Type", "application/json")
-                .timeout(Duration.ofSeconds(45))
+                    // 75s, ABOVE ai_service's own 60s total budget.
+                    //
+                    // ai_service splits that budget across the primary provider
+                    // and the fallback, so a whole call is bounded at ~60s. This
+                    // timeout is the backstop for the case where ai_service is
+                    // wedged entirely -- it must NOT be the thing that fires
+                    // first, which is what produced
+                    // "HttpTimeoutException: request timed out" while the
+                    // fallback was still running.
+                .timeout(Duration.ofSeconds(75))
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)))
                 .build();
 

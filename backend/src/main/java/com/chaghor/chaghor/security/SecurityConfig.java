@@ -82,8 +82,24 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Bean
-    public DaoAuthenticationProvider authenticationProvider() {
+    // NOT a @Bean, deliberately.
+    //
+    // This is registered on the filter chain above via
+    // .authenticationProvider(authenticationProvider()), which is the only
+    // place it is used. Exposing it as a bean AS WELL is what produced:
+    //
+    //   Global AuthenticationManager configured with an AuthenticationProvider
+    //   bean... Consider removing the AuthenticationProvider bean.
+    //
+    // Spring Security sees an AuthenticationProvider bean in the context and
+    // therefore skips wiring the global manager from CustomUserDetailsService.
+    // Nothing here depended on that global wiring -- the chain does it
+    // explicitly -- so the bean annotation was redundant, and the warning was
+    // pointing at real redundancy rather than being noise to silence.
+    //
+    // Keeping it a plain method removes the warning without changing a single
+    // thing about how a login is actually authenticated.
+    private DaoAuthenticationProvider authenticationProvider() {
         DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
         provider.setUserDetailsService(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder());

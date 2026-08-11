@@ -44,7 +44,7 @@ public class ChatbotService {
         payload.put("question", question);
         payload.put("role", role);
         payload.put("user_id", userId);
-        Map<String, Object> res = post("/ask", payload, 60);
+        Map<String, Object> res = post("/ask", payload, 75);
         Integer rowCount = res.get("row_count") instanceof Number n ? n.intValue() : null;
         return new AskResponse(str(res.get("answer")), str(res.get("sql")), rowCount, str(res.get("provider")));
     }
@@ -75,7 +75,7 @@ public class ChatbotService {
         payload.put("metrics", metrics);
         payload.put("language", language == null ? "en" : language);
         payload.put("period_label", periodLabel);
-        Map<String, Object> res = post("/report", payload, 60);
+        Map<String, Object> res = post("/report", payload, 75);
         return str(res.get("summary"));
     }
 

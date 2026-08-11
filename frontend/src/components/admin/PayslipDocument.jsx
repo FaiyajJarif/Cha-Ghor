@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import api from "../../api/client";
 import { createPortal } from "react-dom";
 import { LuPrinter, LuX } from "react-icons/lu";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
@@ -44,6 +45,12 @@ const PRINT_CSS = `
     padding: 0 !important;
   }
   .payslip-page:last-child { page-break-after: auto; break-after: auto; }
+  /* A month of days will not fit beside the summary. Let the table flow onto
+     a second sheet rather than clipping it, but never split a single day's
+     row across a page break -- a half-row is how a figure gets misread. */
+  .payslip-days { page-break-inside: auto; break-inside: auto; }
+  .payslip-days tr { page-break-inside: avoid; break-inside: avoid; }
+  .payslip-days thead { display: table-header-group; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
 @page { size: A4 portrait; margin: 14mm; }
@@ -89,7 +96,7 @@ function Line({ label, value, muted, strong, negative }) {
   );
 }
 
-function OnePayslip({ row, config }) {
+function OnePayslip({ row, config, daily }) {
   const gross = Number(row.grossAmount ?? 0);
   const loan = Number(row.loanDeduction ?? 0);
   const advance = Number(row.advanceRecovery ?? 0);
@@ -210,6 +217,96 @@ function OnePayslip({ row, config }) {
         </p>
       ) : null}
 
+      {/* ==================================================================
+          DAY BY DAY — the working, not just the answer.
+          ==================================================================
+          Until now this document printed four summary lines and nothing else,
+          so neither the office nor the worker could see how a figure was
+          reached. A worker handed a slip saying "net ৳0" had no way to check
+          it, which is the exact dispute this system exists to end.
+
+          Every row here is a fact from daily_settlement where it says
+          "settled", and a projection where it says "pending". */}
+      {daily?.days?.length ? (
+        <div className="mt-6">
+          <h2 className="mb-1 border-b border-cg-green/20 pb-1 text-xs font-bold uppercase tracking-wide text-cg-green">
+            Day by day
+          </h2>
+          <table className="payslip-days w-full text-left text-[11px]">
+            <thead className="text-gray-500">
+              <tr>
+                <th className="py-1 pr-2 font-semibold">Date</th>
+                <th className="py-1 pr-2 font-semibold">Status</th>
+                <th className="py-1 pr-2 text-right font-semibold">kg</th>
+                <th className="py-1 pr-2 text-right font-semibold">Earned</th>
+                <th className="py-1 pr-2 text-right font-semibold">Loan</th>
+                <th className="py-1 pr-2 text-right font-semibold">Advance</th>
+                <th className="py-1 pr-2 text-right font-semibold">Worker gets</th>
+                <th className="py-1 font-semibold">Settled</th>
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              {daily.days
+                .filter((d) => d.status || Number(d.earned) > 0)
+                .map((d) => (
+                  <tr key={d.date} className="border-t border-gray-200">
+                    <td className="py-1 pr-2 text-cg-ink">{fmtDate(d.date)}</td>
+                    <td className="py-1 pr-2 text-gray-500">{d.status || "\u2014"}</td>
+                    <td className="py-1 pr-2 text-right text-gray-600">
+                      {Number(d.kg) > 0 ? Number(d.kg).toFixed(1) : "\u2014"}
+                    </td>
+                    <td className="py-1 pr-2 text-right text-cg-ink">{taka(d.earned)}</td>
+                    <td className="py-1 pr-2 text-right text-rose-600">
+                      {Number(d.toLoan) > 0 ? "-" + taka(d.toLoan) : "\u2014"}
+                    </td>
+                    <td className="py-1 pr-2 text-right text-rose-600">
+                      {Number(d.toAdvance) > 0 ? "-" + taka(d.toAdvance) : "\u2014"}
+                    </td>
+                    <td className="py-1 pr-2 text-right font-semibold text-cg-ink">
+                      {taka(d.payable)}
+                    </td>
+                    {/* The distinction the whole daily model rests on. A
+                        "pending" row is a forecast and may still change. */}
+                    <td className="py-1 text-gray-500">
+                      {d.settled ? "yes" : "pending"}
+                      {d.mismatch ? " (edited)" : ""}
+                    </td>
+                  </tr>
+                ))}
+              <tr className="border-t-2 border-cg-green/30 font-bold">
+                <td className="py-1 pr-2" colSpan={3}>
+                  Total
+                </td>
+                <td className="py-1 pr-2 text-right">{taka(daily.totalEarned)}</td>
+                <td className="py-1 pr-2 text-right text-rose-600">
+                  -{taka(daily.totalToLoan)}
+                </td>
+                <td className="py-1 pr-2 text-right text-rose-600">
+                  -{taka(daily.totalToAdvance)}
+                </td>
+                <td className="py-1 pr-2 text-right">{taka(daily.totalPayable)}</td>
+                <td className="py-1" />
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Say it plainly rather than letting the reader assume. */}
+          <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+            Wages are settled daily. A row marked <strong>yes</strong> has
+            already moved the loan and advance balances; <strong>pending</strong>{" "}
+            has not and may still change. Today is never settled, because leaf
+            can still be weighed in.
+            {Number(daily.mismatchedDays) > 0
+              ? " Rows marked (edited) were changed after settlement — what was actually deducted differs from the figures shown."
+              : ""}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-6 text-[11px] text-gray-500">
+          Day-by-day breakdown unavailable for this period.
+        </p>
+      )}
+
       {/* Signatures */}
       <div className="mt-10 grid grid-cols-2 gap-10">
         <div className="border-t border-gray-400 pt-1 text-center text-[11px] text-gray-500">
@@ -233,6 +330,45 @@ function OnePayslip({ row, config }) {
 export default function PayslipDocument({ rows, config, onClose }) {
   const list = Array.isArray(rows) ? rows : rows ? [rows] : [];
 
+  // The day-by-day working, keyed by payslip id.
+  //
+  // FETCHED SEQUENTIALLY, ON PURPOSE. Printing a whole month's run means one
+  // request per worker; firing fifty at once to hammer the estate's server so a
+  // sheet of paper can render is not a trade worth making. A slip whose days
+  // fail to load still prints — it just says so instead of showing a blank
+  // table, because a payslip that silently omits its working is how this
+  // document lost the office's trust in the first place.
+  const [dailyById, setDailyById] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const wanted = list
+      .filter((r) => r?.id && r?.workerId && r?.periodStart && r?.periodEnd)
+      .map((r) => r);
+    if (!wanted.length) return undefined;
+
+    (async () => {
+      for (const r of wanted) {
+        if (cancelled) return;
+        try {
+          const { data } = await api.get(`/workers/${r.workerId}/daily`, {
+            params: { from: r.periodStart, to: r.periodEnd },
+          });
+          if (cancelled) return;
+          setDailyById((prev) => ({ ...prev, [r.id]: data }));
+        } catch {
+          // Leave it absent. OnePayslip renders the "unavailable" line rather
+          // than an empty table that looks like a worker did nothing.
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.map((r) => r?.id).join(",")]);
+
   // Escape closes the preview.
   useEffect(() => {
     const onKey = (e) => {
@@ -250,7 +386,7 @@ export default function PayslipDocument({ rows, config, onClose }) {
   // the print-only root below. See the layout rule above PRINT_CSS.
   const pages = list.map((r) => (
     <div key={r.id} className="rounded-lg shadow ring-1 ring-black/5">
-      <OnePayslip row={r} config={config} />
+      <OnePayslip row={r} config={config} daily={dailyById[r.id]} />
     </div>
   ));
 

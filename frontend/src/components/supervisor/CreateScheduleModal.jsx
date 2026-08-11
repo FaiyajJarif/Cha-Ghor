@@ -12,6 +12,7 @@ import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import { queueOrSend } from "../../lib/outbox";
 import { newUuid } from "../../lib/uuid";
+import { todayISO } from "../../lib/localDate";
 
 // Create Schedule — planning a harvest or a maintenance task on a field.
 //
@@ -50,7 +51,7 @@ const TYPES = [
   { value: "maintenance", label: "Maintenance" },
 ];
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = todayISO;
 
 export default function CreateScheduleModal({
   open,
