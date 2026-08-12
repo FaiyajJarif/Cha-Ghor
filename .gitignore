@@ -1,0 +1,142 @@
+# ============================================================
+# Cha Ghor - repository .gitignore
+# Save as  .gitignore  in  Cha-Ghor/chaghor/  (the repo root)
+# Merges the Spring Initializr defaults with Node, Python and
+# secret-handling rules for this project.
+# ============================================================
+
+
+# ============================================================
+# SECRETS - never commit these
+# ============================================================
+.env
+.env.*
+!.env.example
+ai_service/.env
+frontend/.env
+backend/src/main/resources/application-local.yaml
+backend/src/main/resources/application-secret.yaml
+*.pem
+*.key
+*.p12
+*.keystore
+
+
+# ============================================================
+# JAVA / MAVEN  (from Spring Initializr)
+# ============================================================
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+.mvn/timing.properties
+*.class
+hs_err_pid*
+replay_pid*
+
+
+# ============================================================
+# NODE / FRONTEND
+# ============================================================
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+
+# ============================================================
+# PYTHON / AI SERVICE
+# ============================================================
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+
+# ============================================================
+# DATABASE DUMPS AND LOCAL DATA
+# ============================================================
+*.sqlite
+*.sqlite3
+*.db
+*.sql.gz
+*.dump
+pgdata/
+docker/pgdata/
+
+
+# ============================================================
+# IDEs AND EDITORS
+# ============================================================
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Vim / Emacs ###
+*.swp
+*.swo
+*~
+\#*\#
+
+
+# ============================================================
+# OS JUNK
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+
+# ============================================================
+# LOGS AND TEMP
+# ============================================================
+*.log
+logs/
+tmp/
+.cache/
+
+
+# ============================================================
+# LOCAL SNAPSHOT TOOL (cg-snap.sh), if used
+# ============================================================
+.cg-snapshots/
