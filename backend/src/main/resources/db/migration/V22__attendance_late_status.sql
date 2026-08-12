@@ -1,0 +1,25 @@
+-- V22: add 'late' to the attendance_status enum.
+--
+-- WHY
+--   The supervisor dashboard reports Present / Absent / Late. Until now the
+--   enum only had ('present','absent','leave'), so a plucker who turned up an
+--   hour after the weigh-in had to be recorded as fully present or fully
+--   absent -- neither of which is true, and the difference matters because
+--   present days drive the base wage.
+--
+-- SAFETY
+--   ADD VALUE on a Postgres enum is append-only: existing rows and existing
+--   code are unaffected, and nothing needs rewriting. The value is LOWERCASE to
+--   match the three already there -- sending 'LATE' would throw
+--   `invalid input value for enum attendance_status`.
+--
+--   IF NOT EXISTS makes this safe to re-run.
+--
+-- NOTE ON WAGES
+--   This migration only makes the value storable. It deliberately does NOT
+--   change the wage formula: PayrollService still counts only `present` days
+--   towards base pay, so adding this cannot silently alter anyone's wages.
+--   Whether a late day earns a full day, a half day or nothing is a policy
+--   decision for the estate, not something a schema change should decide.
+
+ALTER TYPE attendance_status ADD VALUE IF NOT EXISTS 'late';
