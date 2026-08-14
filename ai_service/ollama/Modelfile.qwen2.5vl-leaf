@@ -1,0 +1,32 @@
+# Vision model for leaf grading and health assessment.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Ollama's default context is 4096 tokens, which is too tight for an image plus
+# a prompt. The obvious fix is to pass options.num_ctx, but llm.py calls the
+# OpenAI-compatible endpoint (/v1/chat/completions), and that endpoint IGNORES
+# num_ctx. Baking it into the model is the only way to raise it without
+# rewriting the client to Ollama's native /api/chat.
+#
+# 8192, not more: this runs on a MacBook Air and the KV cache grows with the
+# context. 8192 leaves headroom for a 768px image and the prompt without
+# eating memory the machine does not have.
+#
+# BUILD
+#   cd ai_service
+#   ollama create qwen2.5vl-leaf -f ollama/Modelfile.qwen2.5vl-leaf
+#
+# Then in .env:
+#   OLLAMA_VISION_MODEL=qwen2.5vl-leaf
+#
+# NOTE: llama3.2-vision does not work on current Ollama builds -- mllama is
+# handed to llama.cpp, which has never supported that architecture
+# ("unknown model architecture: 'mllama'"). qwen2.5vl is the working choice.
+
+FROM qwen2.5vl:7b
+
+PARAMETER num_ctx 8192
+
+# Deterministic: the same photograph should not produce a different grade on a
+# second look. This decides pay.
+PARAMETER temperature 0

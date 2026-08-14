@@ -1,0 +1,11 @@
+fastapi>=0.111,<0.116
+uvicorn[standard]>=0.30
+psycopg2-binary>=2.9
+requests>=2.31
+pdfplumber>=0.11
+pydantic>=2.7
+python-dotenv>=1.0
+# Downscales leaf photos before vision calls (ai_service/vision_prep.py).
+# Optional: without it the image is sent full-size and may exceed a small
+# local context window.
+Pillow>=10.0
