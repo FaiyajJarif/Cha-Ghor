@@ -1,0 +1,119 @@
+# backend/src/main/resources/application.yaml
+spring:
+  application:
+    name: cha-ghor-backend
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/chaghor}   # host port 5433 (5432 is busy)
+    username: ${DB_USERNAME:chaghor}
+    password: ${DB_PASSWORD:chaghor_dev_pw}   # override in every real environment
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate      # Flyway owns the schema; Hibernate only validates
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    enabled: true             # runs V1__init.sql on startup
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8080
+  error:
+    include-message: on_param        # only echo the exception message when ?message=... is passed
+    include-stacktrace: never        # never leak stack traces to clients
+    include-binding-errors: never    # validation details come from GlobalExceptionHandler instead
+
+# App-specific config
+app:
+  # Where complaint / field-report evidence is written. Relative paths resolve
+  # against the backend's working directory, so the default puts files in
+  # backend/uploads/cases/. Point this somewhere persistent for a real deploy --
+  # the directory is created on first upload if it does not exist.
+  uploads:
+    dir: ${APP_UPLOADS_DIR:uploads}
+  # Weather for the supervisor dashboard. Open-Meteo is free and needs no API
+  # key, so a fresh clone works with no setup and there is no second secret to
+  # manage. Coordinates default to Sylhet. Set enabled=false to stop the backend
+  # making any outbound call at all -- reads then serve the last stored reading.
+  weather:
+    latitude: ${APP_WEATHER_LAT:24.8949}
+    longitude: ${APP_WEATHER_LON:91.8687}
+    enabled: ${APP_WEATHER_ENABLED:true}
+    # Fetch a fresh reading every hour, at five past.
+    #
+    # Until this existed the ONLY trigger was a supervisor pressing Refresh, so
+    # the harvest advice, the yield forecast's rain factor, the pluck advisor's
+    # weather note and the field-condition suggestion could all be working from
+    # a reading days old without saying so. Open-Meteo is free and keyless, so
+    # 24 calls a day costs nothing.
+    refresh-cron: ${APP_WEATHER_REFRESH_CRON:0 5 * * * *}
+    # Daily retention pass, 03:30. Readings are NEVER deleted -- this only drops
+    # the hourly/7-day prediction arrays off blobs from before today, which are
+    # 96% of a row's size and are forecasts about a day that has already
+    # happened. Temperature, humidity, rainfall and condition are kept forever,
+    # because the yield forecast is meant to learn from them.
+    prune-cron: ${APP_WEATHER_PRUNE_CRON:0 30 3 * * *}
+  security:
+    # Reverse proxies permitted to set X-Forwarded-For on behalf of a client.
+    #
+    # EMPTY means "trust nothing but the TCP socket", which is correct when the
+    # backend is reached directly. X-Forwarded-For is an ordinary request header
+    # that any caller can set, so honouring it from an untrusted peer lets an
+    # attacker land every login attempt in a fresh rate-limit bucket.
+    #
+    # Put nginx / your load balancer address here if you add one, e.g.
+    #   APP_SECURITY_TRUSTED_PROXIES=10.0.0.5,10.0.0.6
+    trusted-proxies: ${APP_SECURITY_TRUSTED_PROXIES:}
+  jwt:
+    # THIS DEFAULT IS PUBLIC. It is in the git history of this repository, so
+    # anyone who can read the source can sign a token that says they are an
+    # admin -- no password involved.
+    #
+    # It stays here because a fresh clone should run with no setup, and it is
+    # now SAFE to keep: JwtService refuses to start on this value unless the
+    # dev/local/test profile is active (or no profile is set at all, i.e. a
+    # laptop). Any real deployment must set APP_JWT_SECRET or it will not boot.
+    #
+    # Minimum 48 characters -- HS384 signs with a 384-bit key.
+    secret: ${APP_JWT_SECRET:dev-only-chaghor-secret-a1b2c3d4e5f60718293a4b5c6d7e8f90}
+    expiration-ms: ${APP_JWT_EXPIRATION_MS:86400000}   # 24h
+  ai:
+    service:
+      url: ${AI_SERVICE_URL:http://127.0.0.1:8000}   # FIXED: now correctly nested under app.ai.service.url
+  cors:
+    # Comma-separated browser origins allowed to call the API.
+    #
+    # This ALSO controls the WebSocket handshake (see WebSocketConfig), so the
+    # REST API and the live sockets cannot drift apart. Sockets accept these as
+    # PATTERNS, so a wildcard works for a LAN address that changes:
+    #
+    #   APP_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://192.168.*.*:5173
+    #
+    # Needed to demo the supervisor screens on a phone. Without the phone's
+    # origin listed, the page loads but every socket is rejected at the
+    # handshake and the live badges sit on "Offline".
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  # Estate warehouse shown on the Supply Chain live map.
+  warehouse:
+    name: Chaghor Central Warehouse - Srimangal
+    lat: 24.3065
+    lng: 91.7296
+
+logging:
+  level:
+    # Dialed down from DEBUG/TRACE: those leak tokens, headers, and auth internals
+    # into logs. Raise temporarily only when debugging auth locally.
+    org.springframework.security: INFO
+    org.springframework.security.web: INFO
