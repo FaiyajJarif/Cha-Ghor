@@ -98,33 +98,73 @@ public class VisionReviewService {
                 org.springframework.data.domain.PageRequest.of(0, n));
     }
 
-    // How the grader is doing, counted from rows a human has checked.
+    // How each model is doing, counted from rows a human has checked.
     //
-    // Refusals are EXCLUDED from accuracy and reported separately -- a refusal
-    // is a correct outcome, not a wrong answer. Same convention as
-    // ai_service/eval_leaf_grade.py, so the two numbers are comparable.
+    // ========================================================================
+    // ONE FIGURE PER MODEL. POOLING THEM DESCRIBED NEITHER.
+    // ========================================================================
+    //
+    // This used to count EVERY reviewed row and return a single accuracyPct.
+    // Two different models write to this table -- the pluck GRADER and the leaf
+    // HEALTH detector -- and until V41 both stored subject_type = 'leaf_grade',
+    // so there was not even a way to tell them apart.
+    //
+    // The pooled number was actively misleading: the grader is measured at
+    // 56.7% against a 51% always-guess-A baseline, p = 0.15, i.e.
+    // indistinguishable from guessing (LEAF_GRADING_ACCURACY.md, n = 97), while
+    // the health detector has never been measured at all. Averaging a known
+    // chance-level model with an unmeasured one produces a number that is
+    // evidence for nothing.
+    //
+    // Refusals are EXCLUDED from the percentage and reported separately -- a
+    // refusal is a correct outcome, not a wrong answer. Same convention as
+    // ai_service/eval_leaf_grade.py, so the figures stay comparable with it.
     @Transactional(readOnly = true)
     public java.util.Map<String, Object> accuracy() {
-        List<VisionInference> rows = repo.findByReviewedAtIsNotNullOrderByReviewedAtDesc(
-                org.springframework.data.domain.PageRequest.of(0, 2000));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("leafGrade", forSubject(VisionSubject.leaf_grade));
+        out.put("leafHealth", forSubject(VisionSubject.leaf_health));
+        // No estate-wide roll-up on purpose. Anyone reading one number would be
+        // reading the average of two unrelated classifiers.
+        out.put("note",
+                "Reported per model. There is deliberately no combined figure: "
+                        + "the grader and the health detector are different models "
+                        + "and one number for both would describe neither.");
+        return out;
+    }
+
+    // One model's record. Counted in the database rather than by loading every
+    // row and filtering in memory -- a shared 2000-row page would let a busy
+    // model starve a quiet one out of its own statistics.
+    private java.util.Map<String, Object> forSubject(VisionSubject subject) {
+        List<VisionInference> rows = repo
+                .findBySubjectTypeAndReviewedAtIsNotNullOrderByReviewedAtDesc(
+                        subject, org.springframework.data.domain.PageRequest.of(0, 2000));
+
         long agree = rows.stream().filter(r -> "agree".equals(r.getSupervisorVerdict())).count();
         long disagree = rows.stream().filter(r -> "disagree".equals(r.getSupervisorVerdict())).count();
         long unsure = rows.stream().filter(r -> "unsure".equals(r.getSupervisorVerdict())).count();
         long refused = rows.stream().filter(r -> r.getRefusedReason() != null).count();
         long judged = agree + disagree;
 
-        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
-        out.put("reviewed", rows.size());
-        out.put("agreed", agree);
-        out.put("disagreed", disagree);
-        out.put("unsure", unsure);
-        out.put("refusedByModel", refused);
-        out.put("accuracyPct", judged == 0 ? null
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("model", subject.name());
+        m.put("reviewed", rows.size());
+        m.put("agreed", agree);
+        m.put("disagreed", disagree);
+        m.put("unsure", unsure);
+        m.put("refusedByModel", refused);
+        m.put("accuracyPct", judged == 0 ? null
                 : Math.round(agree * 1000.0 / judged) / 10.0);
-        out.put("note", judged < 20
-                ? "Fewer than 20 checked readings — too few to draw a conclusion from."
-                : "Counted from readings a supervisor actually ruled on. Refusals are "
-                        + "excluded, not scored as wrong.");
-        return out;
+        // The sample size is part of the claim, not a footnote -- CLAUDE.md §9.5.
+        m.put("sample", judged);
+        m.put("enough", judged >= 20);
+        m.put("note", judged == 0
+                ? "No checked readings yet, so there is no measurement — not a score of zero."
+                : judged < 20
+                        ? "Only " + judged + " checked readings. Too few to draw a conclusion from."
+                        : "From " + judged + " readings a supervisor actually ruled on. "
+                                + "Refusals are excluded, not scored as wrong.");
+        return m;
     }
 }
