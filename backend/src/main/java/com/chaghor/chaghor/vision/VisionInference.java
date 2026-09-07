@@ -27,10 +27,15 @@ public class VisionInference {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Native Postgres enum `vision_subject` ('leaf_grade','pest') -- lowercase,
-    // like every other native enum in this schema.
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(name = "subject_type", nullable = false, columnDefinition = "vision_subject")
+    // VARCHAR + CHECK since V41, which retired the native `vision_subject` enum
+    // (CLAUDE.md §6; same move V28 made for schedule_status).
+    //
+    // @Enumerated(STRING) and NOT the old @JdbcTypeCode(NAMED_ENUM): Hibernate
+    // validates the schema at startup, so leaving the NAMED_ENUM mapping against
+    // a column that is now varchar would stop the whole application booting --
+    // exactly the failure V38 had to be written to undo.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "subject_type", nullable = false, length = 20)
     private VisionSubject subjectType;
 
     @Column(name = "subject_ref", length = 80)
