@@ -179,7 +179,11 @@ public class LeafHealthService {
     private VisionInference save(String ref, String imageUrl, Integer score, String band,
                                  String label, String model, String candidatesJson) {
         return visionRepo.save(VisionInference.builder()
-                .subjectType(VisionSubject.leaf_grade)
+                // WAS leaf_grade, and that was the bug. This is the HEALTH
+                // detector, not the grader; sharing one label pooled two models
+                // into a single accuracy figure that described neither. V41 adds
+                // the value and backfills the rows already written wrongly.
+                .subjectType(VisionSubject.leaf_health)
                 .subjectRef(ref)
                 .imageUrl(imageUrl)
                 .label(label)
