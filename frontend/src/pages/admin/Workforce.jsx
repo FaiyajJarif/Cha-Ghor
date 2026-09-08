@@ -6,6 +6,8 @@ import {
   LuUserPlus,
   LuPhone,
   LuSearch,
+  LuChevronLeft,
+  LuChevronRight,
   LuPencil,
   LuTrash2,
   LuX,
@@ -23,6 +25,9 @@ import {
   LuMap,
 } from "react-icons/lu";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
+import PageHero from "../../components/admin/PageHero";
+import FilterTabs from "../../components/admin/FilterTabs";
+import RecordCard, { CARD_PILL } from "../../components/admin/RecordCard";
 import { apiError } from "../../lib/apiError";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
@@ -122,11 +127,25 @@ function workerCode(id) {
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <div>
+    // THIS CARD IS WHY THE WHOLE PAGE OVERFLOWED, not the lists below it.
+    // It sits in `grid grid-cols-2`, and a GRID ITEM's automatic minimum size
+    // is min-content -- same rule as a flex child. "1,240" is fine, but a
+    // money or score value has no break opportunity, so min-content was the
+    // full string at text-2xl. Two such columns exceeded 360px, the grid grew
+    // past the viewport, and every card BELOW it then rendered against a page
+    // wider than the screen. That is what read as "the cards are overflowing".
+    // Fix is the one already proven on Inventory: min-w-0 + truncate + title,
+    // and a step down to text-xl on phones so truncation is rarely reached.
+    <div className="min-w-0 rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <p className="text-sm text-cg-ink/60">{label}</p>
-          <p className="mt-1 text-2xl font-extrabold text-cg-ink">{value}</p>
+          <p
+            className="mt-1 truncate text-xl font-extrabold tabular-nums text-cg-ink sm:text-2xl"
+            title={typeof value === "string" ? value : undefined}
+          >
+            {value}
+          </p>
           <p className="mt-1 text-xs text-cg-green">{sub}</p>
         </div>
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green">
@@ -152,6 +171,11 @@ export default function Workforce() {
   // Directory filter: choose a field (name / phone / zone) and a value.
   const [filterField, setFilterField] = useState("name");
   const [filterValue, setFilterValue] = useState("");
+  // THE DIRECTORY HAD NO PAGINATION AT ALL. It rendered every worker in the
+  // estate -- on a phone, where each one is now a card, 400 workers is 400
+  // cards in a single scroll. The desktop table was equally unbounded; it just
+  // hid it better.
+  const [dirPage, setDirPage] = useState(1);
 
   // Attendance sheet (right drawer) state.
   const [attOpen, setAttOpen] = useState(false);
@@ -205,6 +229,15 @@ export default function Workforce() {
       return (w.fullName || "").toLowerCase().includes(v);
     });
   }, [workers, filterField, filterValue]);
+
+  const dirPageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Clamped, not trusted: filtering down to 3 rows while sitting on page 5
+  // would otherwise show an empty list with no way back.
+  const dirPageSafe = Math.min(dirPage, dirPageCount);
+  const dirRows = filtered.slice(
+    (dirPageSafe - 1) * PAGE_SIZE,
+    dirPageSafe * PAGE_SIZE,
+  );
 
   const openCreate = () => {
     setForm({ ...EMPTY });
@@ -551,8 +584,44 @@ export default function Workforce() {
 
   return (
     <div className="space-y-5">
-      {/* Stat cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      {/* Follows AdminM - Workforce: title + date pill, search, then the two
+          primary actions stacked full width on a phone. */}
+      <PageHero
+        title="Workforce"
+        subtitle="Management Dashboard"
+        datePill={`Today, ${new Date().toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })}`}
+        actions={
+          <>
+            <button onClick={openCreate} className={`${BTN_DARK} w-full sm:w-auto`}>
+              <LuUserPlus size={16} /> Add New Worker
+            </button>
+            <button onClick={openSheet} className={`${BTN_DARK} w-full sm:w-auto`}>
+              <LuClipboardList size={16} /> Attendance
+            </button>
+          </>
+        }
+      >
+        <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2.5">
+          <LuSearch size={16} className="shrink-0 text-cg-ink/40" />
+          <input
+            value={filterField === "name" ? filterValue : ""}
+            onChange={(e) => {
+              setFilterField("name");
+              setFilterValue(e.target.value);
+            }}
+            placeholder="Search workers by name or ID…"
+            className="w-full bg-transparent text-sm outline-none"
+          />
+        </div>
+      </PageHero>
+
+      {/* Two-up on a phone, three across from sm. Three 120px cards on a 360px
+          screen is where the numbers stop being readable. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
         <StatCard
           icon={LuUsers}
           label="Total workers"
@@ -575,7 +644,10 @@ export default function Workforce() {
 
       {/* Worker directory: C0F28B header bar (title + filter) + table + D3FFAC footer bar */}
       <section className="overflow-hidden rounded-2xl bg-white shadow ring-1 ring-cg-green/10">
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#c0f28b] px-5 py-3">
+        {/* Stacked on a phone. The old single flex-wrap row put a filter
+            select and four buttons on one line, which broke into four ragged
+            rows of half-width controls. */}
+        <div className="space-y-3 bg-[#c0f28b] px-4 py-3 sm:px-5">
           <div>
             <h2 className="font-bold text-cg-ink">Worker directory</h2>
             <p className="text-xs text-cg-ink/70">
@@ -583,28 +655,33 @@ export default function Workforce() {
               can view.
             </p>
           </div>
+
+          {/* Filter FIELD as a tab row: which field you are filtering on is a
+              choice of three, which is exactly what a tab strip is for. */}
+          <FilterTabs
+            tabs={[
+              { key: "name", label: "By name" },
+              { key: "phone", label: "By phone" },
+              { key: "zone", label: "By zone" },
+            ]}
+            value={filterField}
+            onChange={(k) => {
+              setFilterField(k);
+              setFilterValue("");
+              setDirPage(1);
+            }}
+          />
+
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-lg bg-white/70 ring-1 ring-cg-dark/10">
+            <div className="flex w-full items-center rounded-lg bg-white/70 ring-1 ring-cg-dark/10 sm:w-auto">
               <span className="pl-2 text-cg-ink/50">
                 <LuFilter size={15} />
               </span>
-              <select
-                value={filterField}
-                onChange={(e) => {
-                  setFilterField(e.target.value);
-                  setFilterValue("");
-                }}
-                className="bg-transparent py-2 pl-1 pr-1 text-sm font-semibold text-cg-ink outline-none"
-              >
-                <option value="name">Name</option>
-                <option value="phone">Phone</option>
-                <option value="zone">Zone</option>
-              </select>
               {filterField === "zone" ? (
                 <select
                   value={filterValue}
                   onChange={(e) => setFilterValue(e.target.value)}
-                  className="rounded-r-lg bg-transparent py-2 pl-2 pr-3 text-sm outline-none"
+                  className="w-full rounded-r-lg bg-transparent py-2 pl-2 pr-3 text-sm outline-none"
                 >
                   <option value="">All zones</option>
                   {attZones.map((z) => (
@@ -618,7 +695,7 @@ export default function Workforce() {
                   value={filterValue}
                   onChange={(e) => setFilterValue(e.target.value)}
                   placeholder={`Filter by ${filterField}…`}
-                  className="w-44 rounded-r-lg bg-transparent py-2 pl-2 pr-3 text-sm outline-none"
+                  className="w-full rounded-r-lg bg-transparent py-2 pl-2 pr-3 text-sm outline-none sm:w-44"
                 />
               )}
             </div>
@@ -653,7 +730,79 @@ export default function Workforce() {
           </p>
         )}
 
-        <div className="overflow-x-auto px-5 pt-4">
+        {/* ================= MOBILE: one card per worker =================
+            The table below still exists and is the better tool from sm up.
+            On a phone it scrolls sideways, which hides the name by the time
+            you have swiped across to the status -- see RecordCard. */}
+        <ul className="sm:hidden">
+          {loading ? (
+            <li className="px-4 py-8 text-center text-sm text-cg-ink/50">
+              Loading workers…
+            </li>
+          ) : filtered.length === 0 ? (
+            <li className="px-4 py-8 text-center text-sm text-cg-ink/50">
+              {workers.length === 0
+                ? "No workers yet. Tap Add New Worker to create the first one."
+                : "No workers match this filter."}
+            </li>
+          ) : (
+            dirRows.map((w) => (
+              <RecordCard
+                key={w.id}
+                title={w.fullName}
+                meta={
+                  <>
+                    {workerCode(w.id)}
+                    {w.zoneName ? ` • ${w.zoneName}` : ""}
+                    {w.phone ? ` • ${w.phone}` : ""}
+                  </>
+                }
+                pills={
+                  <>
+                    <span className={`${CARD_PILL} bg-cg-lime text-cg-green`}>
+                      {w.status}
+                    </span>
+                    <span className={`${CARD_PILL} ${rolePill(w.jobRole)}`}>
+                      {roleLabel(w.jobRole)}
+                    </span>
+                  </>
+                }
+                footer={
+                  <>
+                    <span className="rounded-lg bg-cg-lime/40 px-2 py-1 text-xs font-bold text-cg-ink">
+                      ৳ {w.dailyWage}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMonthFor({ id: w.id, name: w.fullName })}
+                      className="rounded-lg bg-cg-lime/40 px-2 py-1 text-xs font-semibold text-cg-green"
+                    >
+                      This month
+                    </button>
+                    <span className="ml-auto flex gap-1">
+                      <button
+                        onClick={() => openEdit(w)}
+                        aria-label="Edit"
+                        className="rounded-lg p-2 text-cg-ink/60 hover:bg-cg-lime"
+                      >
+                        <LuPencil size={15} />
+                      </button>
+                      <button
+                        onClick={() => remove(w)}
+                        aria-label="Remove"
+                        className="rounded-lg p-2 text-cg-ink/60 hover:bg-red-50 hover:text-red-600"
+                      >
+                        <LuTrash2 size={15} />
+                      </button>
+                    </span>
+                  </>
+                }
+              />
+            ))
+          )}
+        </ul>
+
+        <div className="hidden overflow-x-auto px-5 pt-4 sm:block">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-cg-green/10 text-cg-ink/60">
@@ -683,7 +832,7 @@ export default function Workforce() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((w) => (
+                dirRows.map((w) => (
                   <tr key={w.id} className="border-b border-cg-green/5">
                     <td className="py-2 pr-4 font-medium text-cg-ink">
                       {/* Opens this worker's month: present / late / absent,
@@ -757,11 +906,42 @@ export default function Workforce() {
           </table>
         </div>
 
-        <div className="mt-4 flex items-center justify-between bg-[#d3ffac] px-5 py-2 text-sm text-cg-ink/70">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 bg-[#d3ffac] px-4 py-2 text-sm text-cg-ink/70 sm:px-5">
           <span>
-            Showing <b className="text-cg-ink">{filtered.length}</b> of{" "}
-            <b className="text-cg-ink">{workers.length}</b> workers
+            Showing{" "}
+            <b className="text-cg-ink">
+              {filtered.length === 0 ? 0 : (dirPageSafe - 1) * PAGE_SIZE + 1}–
+              {Math.min(dirPageSafe * PAGE_SIZE, filtered.length)}
+            </b>{" "}
+            of <b className="text-cg-ink">{filtered.length}</b>
+            {filtered.length !== workers.length && ` (of ${workers.length})`}
           </span>
+
+          {dirPageCount > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setDirPage(Math.max(1, dirPageSafe - 1))}
+                disabled={dirPageSafe <= 1}
+                aria-label="Previous page"
+                className="grid h-8 w-8 place-items-center rounded-lg bg-white text-cg-ink disabled:opacity-40"
+              >
+                <LuChevronLeft size={16} />
+              </button>
+              <span className="px-1 text-xs font-semibold text-cg-ink">
+                {dirPageSafe} / {dirPageCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDirPage(Math.min(dirPageCount, dirPageSafe + 1))}
+                disabled={dirPageSafe >= dirPageCount}
+                aria-label="Next page"
+                className="grid h-8 w-8 place-items-center rounded-lg bg-white text-cg-ink disabled:opacity-40"
+              >
+                <LuChevronRight size={16} />
+              </button>
+            </div>
+          )}
           {filterValue && (
             <button
               onClick={() => setFilterValue("")}
@@ -1049,14 +1229,32 @@ export default function Workforce() {
       {/* Attendance sheet — full-height drawer from the right (portal => flush to top) */}
       {attOpen &&
         createPortal(
-          <div className="fixed inset-0 z-[70] flex">
+          // ============ THE SAME CENTRED CARD AS ADD WORKER / ADD ITEM ============
+          //
+          // This was an edge-to-edge bottom sheet: glued to the bottom of the
+          // screen, full bleed, rounded on the top two corners only. Add Worker
+          // and Add Item are centred cards with a p-4 gutter and all four
+          // corners rounded, so this read as a different kind of object on the
+          // same screen -- and with no side gutter it looked like it ran off
+          // the edge rather than sitting on the page.
+          //
+          // Shell copied from Inventory's Add Item, which is the one that
+          // already looks right: grid place-items-center + p-4 on the backdrop,
+          // w-full max-w-* rounded-2xl on the card.
+          <div
+            className="fixed inset-0 z-[70] grid place-items-center bg-black/40 p-4"
+            onClick={() => setAttOpen(false)}
+          >
+            {/* The backdrop closes; a click inside the card must not bubble up
+                to it, or every tap in the sheet would dismiss it. */}
             <div
-              className="flex-1 bg-black/40"
-              onClick={() => setAttOpen(false)}
-            />
-            <div className="flex h-full w-full flex-col overflow-hidden rounded-l-2xl bg-white shadow-2xl md:w-[70%]">
-              {/* Header */}
-              <div className="flex shrink-0 items-center justify-between gap-3 px-6 py-4">
+              className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header. Follows AsupDaily: title + date on the left, a dark
+                  circular X on the right, then Mark All Present and Save
+                  Attendance side by side at full width. */}
+              <div className="flex shrink-0 flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                 <div>
                   <h3 className="flex flex-wrap items-center gap-2 text-xl font-extrabold text-cg-ink">
                     Daily Attendance
@@ -1086,26 +1284,30 @@ export default function Workforce() {
                     {prettyDate(attDate)}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={exportCsv}
-                    disabled={workers.length === 0}
-                    className={BTN_GHOST}
-                  >
-                    <LuDownload size={16} /> Export
-                  </button>
+                {/* Two primary actions share the row at equal width on a
+                    phone, as in the frame. Export drops to an icon so it does
+                    not steal space from the two that matter. */}
+                <div className="grid grid-cols-2 items-center gap-2 sm:flex">
                   <button
                     onClick={markAllPresent}
-                    className="inline-flex items-center gap-2 rounded-lg bg-cg-lime px-4 py-2 text-sm font-semibold text-cg-ink transition hover:bg-cg-lime/70"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-cg-lime px-4 py-2.5 text-sm font-bold text-cg-ink ring-1 ring-cg-green/30 transition active:scale-95 hover:bg-cg-lime/70"
                   >
                     <LuCheck size={16} /> Mark All Present
                   </button>
                   <button
                     onClick={saveAttendance}
                     disabled={attSaving || workers.length === 0}
-                    className={BTN_DARK}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-cg-dark px-4 py-2.5 text-sm font-bold text-white transition active:scale-95 disabled:opacity-50"
                   >
                     {attSaving ? "Saving…" : "Save Attendance"}
+                  </button>
+                  <button
+                    onClick={exportCsv}
+                    disabled={workers.length === 0}
+                    aria-label="Export CSV"
+                    className={`${BTN_GHOST} hidden sm:inline-flex`}
+                  >
+                    <LuDownload size={16} /> Export
                   </button>
                   <button
                     onClick={() => setAttOpen(false)}
@@ -1164,13 +1366,110 @@ export default function Workforce() {
               </div>
 
               {/* Table */}
-              <div className="flex-1 overflow-y-auto px-6">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6">
                 {workers.length === 0 ? (
                   <p className="py-10 text-center text-sm text-cg-ink/50">
                     No workers to mark yet.
                   </p>
                 ) : (
-                  <table className="w-full overflow-hidden rounded-xl text-left text-sm">
+                <>
+                {/* ========== MOBILE: THE SAME CARD AS EVERY OTHER LIST ==========
+                    This was a bespoke 4-column grid, which made it the third
+                    different card shape in the console. It now uses RecordCard,
+                    so the padding, avatar size, title weight and pill sizing are
+                    identical to the Workforce directory and the payslip list.
+
+                    Layout per card:
+                      top    checkbox + avatar + NAME / code, status pill right
+                      footer the status button and the check-in time
+                    The status button is full-width-ish and 40px tall because it
+                    is the control this whole screen exists for. */}
+                <ul className="sm:hidden">
+                  {attRows.map((w) => {
+                    const st = att[w.id] || "absent";
+                    return (
+                      <RecordCard
+                        key={w.id}
+                        avatar={
+                          <span className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={st === "present"}
+                              onChange={(e) =>
+                                setStatus(w.id, e.target.checked ? "present" : "absent")
+                              }
+                              aria-label={`Mark ${w.fullName} present`}
+                              className="h-5 w-5"
+                            />
+                            <Avatar name={w.fullName} size={36} />
+                          </span>
+                        }
+                        title={w.fullName}
+                        meta={
+                          <>
+                            {workerCode(w.id)}
+                            {w.zoneName ? ` • ${w.zoneName}` : ""}
+                          </>
+                        }
+                        pills={
+                          <span className={`${CARD_PILL} ${rolePill(w.jobRole)}`}>
+                            {roleLabel(w.jobRole)}
+                          </span>
+                        }
+                        footer={
+                          <>
+                            <button
+                              onClick={() => cycleStatus(w.id)}
+                              aria-label={`Change status for ${w.fullName}`}
+                              className={`h-10 flex-1 rounded-lg text-xs font-bold ${ATT_PILL[st]}`}
+                            >
+                              {st.toUpperCase()}
+                            </button>
+                            <input
+                              type="time"
+                              value={checkIn[w.id] || ""}
+                              onChange={(e) =>
+                                setCheckIn((c) => ({ ...c, [w.id]: e.target.value }))
+                              }
+                              disabled={st !== "present"}
+                              aria-label={`Check-in time for ${w.fullName}`}
+                              className="h-10 w-28 rounded-lg border border-cg-green/30 px-2 text-xs outline-none disabled:opacity-40"
+                            />
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                </ul>
+
+                {attTotalPages > 1 && (
+                  <div className="flex items-center justify-end gap-1 border-t border-cg-green/10 px-4 py-2 sm:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setAttPage(Math.max(1, attPageSafe - 1))}
+                      disabled={attPageSafe <= 1}
+                      aria-label="Previous page"
+                      className="grid h-8 w-8 place-items-center rounded-lg bg-cg-lime/50 text-cg-ink disabled:opacity-40"
+                    >
+                      <LuChevronLeft size={16} />
+                    </button>
+                    <span className="px-2 text-xs font-semibold text-cg-ink">
+                      {attPageSafe} / {attTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAttPage(Math.min(attTotalPages, attPageSafe + 1))}
+                      disabled={attPageSafe >= attTotalPages}
+                      aria-label="Next page"
+                      className="grid h-8 w-8 place-items-center rounded-lg bg-cg-lime/50 text-cg-ink disabled:opacity-40"
+                    >
+                      <LuChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
+
+                <div className="-mx-2 hidden overflow-x-auto px-2 sm:block">
+                  <table className="w-full min-w-[520px] overflow-hidden rounded-xl text-left text-sm">
                     <thead>
                       <tr className="bg-cg-dark text-xs uppercase tracking-wide text-white">
                         <th className="w-10 py-3 pl-4">
@@ -1268,6 +1567,8 @@ export default function Workforce() {
                       )}
                     </tbody>
                   </table>
+                  </div>
+                </>
                 )}
                 {attMsg && (
                   <p className="my-3 rounded-lg bg-cg-lime/50 px-3 py-2 text-sm text-cg-ink/80">
