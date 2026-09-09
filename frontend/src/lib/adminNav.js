@@ -8,6 +8,7 @@ import {
   LuFileText,
   LuReceipt,
   LuTruck,
+  LuSmartphone,
 } from "react-icons/lu";
 
 // The admin console navigation. Each entry is one estate module from our
@@ -55,6 +56,15 @@ export const ADMIN_NAV = [
     path: "/admin/loans",
     icon: LuHandCoins,
     ai: "Loan credibility score",
+  },
+  {
+    // Sits next to Loans because both are money LEAVING the estate to a
+    // worker, and the two screens are used in the same sitting.
+    key: "bkash",
+    label: "bKash Payout",
+    path: "/admin/bkash",
+    icon: LuSmartphone,
+    ai: null,
   },
   {
     key: "reports",
