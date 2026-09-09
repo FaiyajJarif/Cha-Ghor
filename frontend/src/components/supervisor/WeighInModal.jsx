@@ -147,7 +147,7 @@ export default function WeighInModal({ open, date, workers, zones, registerTaken
         >
           {done ? (
             /* ---------- success ---------- */
-            <div className="flex flex-col items-center px-8 py-10 text-center">
+            <div className="flex flex-col items-center px-5 py-8 text-center sm:px-8 sm:py-10">
               <LuCircleCheck size={64} strokeWidth={1.5} className="text-[#14493B]" />
               <h3 className="mt-6 text-2xl font-extrabold leading-tight text-[#14493B]">
                 {done.queued ? (
@@ -194,7 +194,7 @@ export default function WeighInModal({ open, date, workers, zones, registerTaken
           ) : (
             /* ---------- form ---------- */
             <>
-              <div className={`flex items-center justify-between ${HEADER} px-6 py-5`}>
+              <div className={`flex shrink-0 items-center justify-between gap-2 ${HEADER} px-4 py-4 sm:px-6 sm:py-5`}>
                 <h3 className="text-xl font-extrabold text-white">
                   Submit Collection
                 </h3>
@@ -208,7 +208,7 @@ export default function WeighInModal({ open, date, workers, zones, registerTaken
                 </button>
               </div>
 
-              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
                 {error && (
                   <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">
                     {error}
