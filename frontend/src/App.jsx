@@ -31,6 +31,7 @@ import Payroll from "./pages/admin/Payroll";
 import Finance from "./pages/admin/Finance";
 import Inventory from "./pages/admin/Inventory";
 import Loans from "./pages/admin/Loans";
+import BkashPayout from "./pages/admin/BkashPayout";
 import Reports from "./pages/admin/Reports";
 import Complaints from "./pages/admin/Complaints";
 import Supply from "./pages/admin/Supply";
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="finance" element={<Finance />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="loans" element={<Loans />} />
+          <Route path="bkash" element={<BkashPayout />} />
           <Route path="reports" element={<Reports />} />
           <Route path="complaints" element={<Complaints />} />
           <Route path="supply" element={<Supply />} />
