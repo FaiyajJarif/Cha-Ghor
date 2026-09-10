@@ -14,6 +14,28 @@ spring:
     password: ${DB_PASSWORD:chaghor_dev_pw}   # override in every real environment
     driver-class-name: org.postgresql.Driver
 
+    # ==================================================================
+    # POOL AND TIMEOUTS - the difference between "slow" and "everyone stuck".
+    # ==================================================================
+    #
+    # Nothing was configured here, so Spring's defaults applied: 10 connections
+    # and NO query timeout. One accidental full-table scan holds a connection
+    # indefinitely and the eleventh concurrent request queues behind it with no
+    # upper bound. That is how a single bad query becomes an outage.
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN:5}
+      # Fail fast rather than stacking up threads that will time out at the
+      # client anyway.
+      connection-timeout: 10000
+      max-lifetime: 1800000
+      idle-timeout: 600000
+      # HARD CEILING ON ANY SINGLE QUERY, enforced by Postgres itself so the
+      # connection is genuinely released instead of being held by a client that
+      # has already given up.
+      data-source-properties:
+        options: "-c statement_timeout=15000"
+
   jpa:
     hibernate:
       ddl-auto: validate      # Flyway owns the schema; Hibernate only validates
@@ -30,6 +52,34 @@ spring:
 
 server:
   port: 8080
+
+  # ======================================================================
+  # HTTPS - OFF BY DEFAULT, ON WITH ONE ENV VAR.
+  # ======================================================================
+  #
+  # Without TLS every JWT, password and 4-digit PIN crosses the wifi in clear
+  # text, and anyone on the same network can read a token and replay it as that
+  # user. For an estate demo on a shared network that is the single biggest
+  # confidentiality gap in the system.
+  #
+  # It is OFF by default on purpose. Turning it on unconditionally would break
+  # the plain-HTTP setup you are testing from a phone right now, and a
+  # self-signed certificate makes a mobile browser show a full-page warning that
+  # has to be accepted before anything loads -- including, separately, before
+  # the WebSocket will connect.
+  #
+  # To enable:
+  #   ./scripts/gen-dev-cert.sh          # writes backend/src/main/resources/dev-keystore.p12
+  #   APP_SSL_ENABLED=true ./mvnw spring-boot:run
+  #
+  # Then use https://<ip>:8080 and accept the warning once on each device.
+  # In production use a real certificate and set the three variables below.
+  ssl:
+    enabled: ${APP_SSL_ENABLED:false}
+    key-store: ${APP_SSL_KEYSTORE:classpath:dev-keystore.p12}
+    key-store-password: ${APP_SSL_KEYSTORE_PASSWORD:changeit}
+    key-store-type: PKCS12
+    key-alias: ${APP_SSL_KEY_ALIAS:chaghor}
   error:
     include-message: on_param        # only echo the exception message when ?message=... is passed
     include-stacktrace: never        # never leak stack traces to clients
@@ -104,12 +154,47 @@ app:
     # Needed to demo the supervisor screens on a phone. Without the phone's
     # origin listed, the page loads but every socket is rejected at the
     # handshake and the live badges sit on "Offline".
-    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    # Comma-separated PATTERNS (not exact origins) — see SecurityConfig.
+    #
+    # The three private IPv4 ranges are included so a phone on the same wifi
+    # can reach the app with no configuration. They are LAN-only addresses:
+    # nothing routable from the internet matches them, so this does not open
+    # the API to the world. Narrow it to your real domain in production by
+    # setting APP_CORS_ALLOWED_ORIGINS.
+    # BOTH SCHEMES. Turning on APP_SSL_ENABLED changes every browser origin
+    # from http:// to https://, and an allowlist holding only http entries
+    # would reject every request the moment TLS was switched on -- a failure
+    # that looks like the backend being down rather than a CORS rule.
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://192.168.*.*:5173,http://10.*.*.*:5173,http://172.16.*.*:5173,https://localhost:5173,https://127.0.0.1:5173,https://192.168.*.*:5173,https://10.*.*.*:5173,https://172.16.*.*:5173}
   # Estate warehouse shown on the Supply Chain live map.
   warehouse:
     name: Chaghor Central Warehouse - Srimangal
     lat: 24.3065
     lng: 91.7296
+
+# ---------------------------------------------------------------------------
+# SMS transport
+# ---------------------------------------------------------------------------
+# Which SmsSender implementation is active. Exactly one is, chosen by this value
+# via @ConditionalOnProperty: mock | macmessages | bulksmsbd | sslwireless.
+#
+# macmessages is the estate's transport: the backend drives Messages.app on the
+# Mac it runs on, which sends a real SMS out through the paired iPhone's SIM via
+# Text Message Forwarding. See MacMessagesSmsSender.
+#
+# SETTING THIS DOES NOT SEND ANYTHING ON ITS OWN, and that is deliberate.
+# app_setting.sms_enabled (V43) defaults to FALSE, so a freshly configured
+# system still transmits nothing until an admin arms it in Settings. Two
+# independent gates: the transport here, the decision there.
+#
+# Override per-run without editing this file:
+#   SMS_PROVIDER=mock ./mvnw spring-boot:run
+sms:
+  provider: ${SMS_PROVIDER:macmessages}
+  macmessages:
+    # How long to wait for osascript before giving up. A stalled Messages.app
+    # must not hang a web request.
+    timeout-seconds: ${SMS_MACMESSAGES_TIMEOUT:20}
 
 logging:
   level:
