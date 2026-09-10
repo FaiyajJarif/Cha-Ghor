@@ -145,7 +145,7 @@ export default function HarvestingFieldsModal({ open, fields, onChanged, onClose
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-3 border-b border-[#13483B]/10 px-6 py-4">
-            <label className="relative flex min-w-[13rem] flex-1 items-center">
+            <label className="relative flex min-w-0 flex-1 items-center sm:min-w-[13rem]">
               <LuSearch size={15} className="pointer-events-none absolute left-3 text-[#14493B]/40" />
               <input
                 value={q}
