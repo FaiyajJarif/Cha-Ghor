@@ -7,9 +7,29 @@ services:
     environment:
       POSTGRES_DB: chaghor
       POSTGRES_USER: chaghor
-      POSTGRES_PASSWORD: chaghor_dev_pw
+      # Overridable, so a real deployment is not using a password published in
+      # this repository. The dev default keeps a fresh clone working.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-chaghor_dev_pw}
     ports:
-      - "5433:5432"   # HOST:CONTAINER -> connect from your machine on 5433
+      # ==================================================================
+      # BOUND TO LOOPBACK. THIS IS THE IMPORTANT PART OF THIS FILE.
+      # ==================================================================
+      #
+      # This was "5433:5432", which Docker expands to 0.0.0.0:5433 -- the
+      # database listening on EVERY interface. On a laptop joined to an estate
+      # or campus wifi that means anyone on the network could connect straight
+      # to Postgres with the credentials above (which are in this file, in git)
+      # and read every wage, loan and phone number, or rewrite finance_ledger.
+      #
+      # That bypasses the entire application: JWT auth, role checks, the audit
+      # trail, the money invariants. All of it sits ABOVE this port.
+      #
+      # 127.0.0.1 restricts it to processes on this machine. The backend still
+      # connects normally; nothing on the network can.
+      #
+      # Testing from a phone does NOT need this open -- the phone talks to the
+      # backend on 8080, and only the backend talks to Postgres.
+      - "127.0.0.1:5433:5432"
     volumes:
       - chaghor_pgdata:/var/lib/postgresql/data      # data survives restarts
       - ./init:/docker-entrypoint-initdb.d           # runs once on first boot
