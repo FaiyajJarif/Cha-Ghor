@@ -39,6 +39,11 @@ import LeafPhotoThumb from "../../components/supervisor/LeafPhotoThumb";
 import ReportLeafProblemModal from "../../components/supervisor/ReportLeafProblemModal";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, {
+  CARD_PILL,
+  CARD_CHIP,
+} from "../../components/admin/RecordCard";
 import { todayISO } from "../../lib/localDate";
 
 // Leaf Collection — the daily weigh-in board.
@@ -88,7 +93,11 @@ const kg = (n) =>
 
 function Card({ children, className = "" }) {
   return (
-    <div className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE} ${className}`}>
+    // min-w-0: a grid item's automatic minimum is min-content, so without it
+    // one long unbreakable value keeps the whole grid wider than the phone.
+    <div
+      className={`min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE} ${className}`}
+    >
       {children}
     </div>
   );
@@ -103,17 +112,25 @@ function Kpi({ icon: Icon, label, value, unit, sub, tone = "green" }) {
         : "bg-cg-lime text-cg-green";
   return (
     <div
-      className={`rounded-2xl p-5 shadow ${CARD_STROKE} ${tone === "red" ? "bg-rose-50" : "bg-white"}`}
+      className={`min-w-0 rounded-2xl p-4 shadow sm:p-5 ${CARD_STROKE} ${tone === "red" ? "bg-rose-50" : "bg-white"}`}
     >
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-bold uppercase tracking-wide text-cg-ink/50">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-bold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
-        <span className={`grid h-9 w-9 place-items-center rounded-xl ${chip}`}>
+        <span
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${chip}`}
+        >
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-2 text-3xl font-extrabold text-cg-ink">
+      {/* truncate + title: "1,240.5" plus a unit has no break opportunity, so
+          at text-3xl it was this card's min-content width and kept the two-up
+          grid wider than a 360px screen. */}
+      <p
+        className="mt-2 truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl"
+        title={typeof value === "string" ? value : undefined}
+      >
         {value}
         {unit ? (
           <span className="ml-1 text-base font-bold text-cg-ink/40">{unit}</span>
@@ -593,7 +610,8 @@ export default function SupervisorLeaf() {
       )}
 
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Two-up on a phone, as in the Figma frame. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Kpi icon={LuLeaf} label="Total collected" value={kg(totalKg)} unit="kg"
              sub={`${summary?.entries ?? 0} weigh-ins today`} />
         <Kpi icon={LuUsers} label="Avg worker collection" value={kg(avgPerWorker)} unit="kg"
@@ -966,7 +984,8 @@ export default function SupervisorLeaf() {
             No leaf recorded in the last 14 days.
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={260}>
+          <div className="h-56 w-full sm:h-72">
+          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trend}>
               <defs>
                 <linearGradient id="leafArea" x1="0" y1="0" x2="0" y2="1">
@@ -982,6 +1001,7 @@ export default function SupervisorLeaf() {
                     stroke="#3f8f43" fill="url(#leafArea)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
+          </div>
         )}
       </Card>
 
@@ -1000,7 +1020,49 @@ export default function SupervisorLeaf() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* ============ MOBILE: THE DAY SHEET AS CARDS ============
+                Seven columns at min-w-[760px] is over two phone screens. The
+                two numbers that matter — kilos in and whether the quota was
+                met — sat at the far right, off the edge. */}
+            <ul className="sm:hidden">
+              {pageRows.map((w) => (
+                <RecordCard
+                  key={w.workerId}
+                  title={w.name}
+                  meta={
+                    <>
+                      #CG{String(w.workerId).padStart(3, "0")}
+                      {w.zone ? ` • ${w.zone}` : ""} • target {quota} kg
+                    </>
+                  }
+                  pills={
+                    <span
+                      className={`${CARD_PILL} uppercase ${
+                        w.kg >= quota
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {w.kg >= quota ? "achieved" : "under target"}
+                    </span>
+                  }
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                        {kg(w.kg)} kg
+                      </span>
+                      {/* Grade-A kilos carry the ৳1/kg bonus, so they are a
+                          separate figure rather than folded into the total. */}
+                      <span className={`${CARD_CHIP} bg-cg-lime/50 text-cg-green`}>
+                        A: {kg(w.gradeA)} kg
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                   <tr>

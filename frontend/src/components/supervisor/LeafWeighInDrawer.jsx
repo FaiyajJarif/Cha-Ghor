@@ -19,6 +19,8 @@ import { queueOrSend } from "../../lib/outbox";
 import { newUuid } from "../../lib/uuid";
 import ZonePicker from "./ZonePicker";
 import ReportLeafProblemModal from "./ReportLeafProblemModal";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, { CARD_PILL } from "../admin/RecordCard";
 
 // Weigh-in board — the whole day's scale work on one sliding panel.
 //
@@ -313,14 +315,30 @@ export default function LeafWeighInDrawer({
         zones={zones}
         onClose={() => setReportOpen(false)}
       />
-      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
+      {/* ========== THE SAME CENTRED CARD AS ADD WORKER / ADD ITEM ==========
+          `inset-y-0 right-0 w-full` is a full-height, full-width white slab on
+          a phone: square corners, edge to edge, no gutter, indistinguishable
+          from a page rather than a layer over one. Every other dialog in the
+          product is a centred card with a p-4 gutter and rounded corners, so
+          this read as a different kind of object -- and with nothing between
+          the panel and the screen edge it looked like it ran off it.
+
+          Backdrop is now the positioning parent, so the card is centred rather
+          than anchored to an edge. */}
+      <div
+        className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4"
+        onClick={onClose}
+      >
       <aside
-        className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-3xl flex-col bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
         role="dialog"
         aria-label="Leaf weigh-in board"
+        /* The backdrop closes; a click inside must not bubble up to it, or
+           every tap in the panel would dismiss it. */
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={`flex flex-wrap items-start justify-between gap-3 ${HEADER} px-6 py-4`}>
+        <div className={`flex shrink-0 flex-wrap items-start justify-between gap-3 ${HEADER} px-4 py-4 sm:px-6`}>
           <div>
             <h3 className="text-xl font-extrabold text-white">Weigh-in board</h3>
             <p className="text-sm text-white/60">
@@ -402,7 +420,9 @@ export default function LeafWeighInDrawer({
           <>
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-3 px-6 py-4">
-              <label className="relative flex min-w-[14rem] flex-1 items-center">
+              {/* min-w-[14rem] is 224px of un-shrinkable width in a 360px
+                  panel — it forced the toolbar wider than the screen. */}
+              <label className="relative flex min-w-0 flex-1 items-center sm:min-w-[14rem]">
                 <LuSearch
                   size={15}
                   className="pointer-events-none absolute left-3 text-cg-ink/40"
@@ -442,7 +462,7 @@ export default function LeafWeighInDrawer({
             )}
 
             {/* The queue */}
-            <div className="flex-1 overflow-y-auto px-6">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
               {workers.length > 0 && rows.length === 0 && !q.trim() ? (
                 <div className="mt-6 flex items-start gap-2 rounded-xl bg-emerald-50 px-4 py-4 text-sm text-emerald-900 ring-1 ring-emerald-200">
                   <LuCircleCheck size={16} className="mt-0.5 shrink-0" />
@@ -462,7 +482,127 @@ export default function LeafWeighInDrawer({
                   </span>
                 </div>
               ) : (
-                <table className="w-full min-w-[640px] text-left text-sm">
+                <>
+                {/* ============ MOBILE: THE WEIGH-IN BOARD AS CARDS ============
+                    min-w-[640px] is nearly two phone screens. Weighing in meant
+                    reading a name, swiping right to type the kilos, and no
+                    longer seeing whose leaf was on the scale — on the screen
+                    where the number becomes someone's wages.
+
+                    Everything the row had is kept, stacked: field, weight,
+                    grade, photo. Nothing is dropped, because dropping the grade
+                    would silently cost a worker the ৳1/kg grade-A bonus. */}
+                <ul className="sm:hidden">
+                  {pageRows.map((w) => {
+                    const d = draft[w.id] || {};
+                    const done = alreadyWeighed?.get?.(w.id);
+                    return (
+                      <RecordCard
+                        key={w.id}
+                        avatar={<Avatar name={w.fullName} />}
+                        title={w.fullName}
+                        meta={
+                          <>
+                            CG{String(w.id).padStart(3, "0")}
+                            {w.todayStatus === "late" ? " • late" : ""}
+                          </>
+                        }
+                        pills={
+                          // Already-weighed kilos, so a second entry reads as a
+                          // deliberate addition rather than an accidental
+                          // duplicate.
+                          done > 0 ? (
+                            <span className={`${CARD_PILL} bg-cg-lime text-cg-green`}>
+                              {done} kg in
+                            </span>
+                          ) : null
+                        }
+                        footer={
+                          <>
+                            <div className="flex w-full items-center gap-2">
+                              <input
+                                type="number"
+                                min={0}
+                                max={200}
+                                step="0.1"
+                                inputMode="decimal"
+                                value={d.kg ?? ""}
+                                onChange={(e) => {
+                                  set(w.id, { kg: e.target.value });
+                                  setError("");
+                                }}
+                                placeholder="0.0"
+                                aria-label={`Weight for ${w.fullName}`}
+                                // Explicit bg AND text colour -- see the note on
+                                // the desktop field. An unstyled input inherits
+                                // white-on-white in dark mode.
+                                className="h-10 w-24 shrink-0 rounded-lg border border-[#13483B59] bg-white px-2.5 text-sm font-semibold text-cg-ink placeholder:text-cg-ink/35 outline-none focus:border-cg-green"
+                              />
+                              <span className="shrink-0 text-xs font-semibold text-cg-ink/40">
+                                kg
+                              </span>
+                              <div className="ml-auto flex gap-1">
+                                {GRADES.map((g) => {
+                                  const hinted =
+                                    d.suggested === g.value && d.grade !== g.value;
+                                  return (
+                                    <button
+                                      key={g.value}
+                                      type="button"
+                                      title={
+                                        hinted
+                                          ? `${g.hint} — the photo suggests this. Often wrong; check the leaf.`
+                                          : g.hint
+                                      }
+                                      onClick={() => set(w.id, { grade: g.value })}
+                                      className={`h-10 w-9 rounded-lg text-xs font-bold transition ${
+                                        d.grade === g.value
+                                          ? "bg-cg-dark text-white"
+                                          : hinted
+                                            ? "bg-cg-lime/50 text-cg-ink ring-2 ring-cg-dark/40"
+                                            : "bg-cg-lime/50 text-cg-ink"
+                                      }`}
+                                    >
+                                      {g.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="w-full">
+                              <ZonePicker
+                                value={d.zoneId ?? w.todayZoneId ?? null}
+                                zones={zones}
+                                homeZoneName={w.zoneName || "—"}
+                                onChange={(id) => set(w.id, { zoneId: id })}
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPhotoFor(w.id);
+                                photoRef.current?.click();
+                              }}
+                              className="rounded-lg bg-cg-lime/40 px-2 py-1 text-xs font-semibold text-cg-green"
+                            >
+                              {d.photoPreview ? "Retake photo" : "Bulk photo"}
+                            </button>
+
+                            {d.suggested && !d.grade && (
+                              <span className="text-[10px] leading-tight text-cg-ink/45">
+                                photo suggests {d.suggested} — you decide
+                              </span>
+                            )}
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                </ul>
+
+                <table className="hidden w-full min-w-[640px] text-left text-sm sm:table">
                   <thead>
                     <tr className="bg-cg-dark text-[11px] uppercase tracking-wide text-white/90">
                       <th className="px-4 py-3 font-bold">Worker</th>
@@ -643,12 +783,13 @@ export default function LeafWeighInDrawer({
                     })}
                   </tbody>
                 </table>
+                </>
               )}
             </div>
 
             {/* Pagination */}
             {workers.length > 0 && (
-              <div className={`flex flex-wrap items-center justify-between gap-3 ${HEADER} px-6 py-3`}>
+              <div className={`flex shrink-0 flex-wrap items-center justify-between gap-3 ${HEADER} px-4 py-3 sm:px-6`}>
                 <span className="text-xs font-bold uppercase tracking-wide text-white/70">
                   Showing {pageRows.length} of {rows.length}
                 </span>
@@ -680,6 +821,7 @@ export default function LeafWeighInDrawer({
           </>
         )}
       </aside>
+      </div>
     </>,
     document.body,
   );
