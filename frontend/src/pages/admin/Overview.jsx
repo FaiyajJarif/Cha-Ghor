@@ -33,6 +33,7 @@ import {
 import api from "../../api/client";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
+import PageHero from "../../components/admin/PageHero";
 
 
 const GREEN = "#3f8f43";
@@ -100,9 +101,21 @@ function healthScore(summary, trend) {
   const marginPart = Math.max(0, Math.min(margin / 0.3, 1));
 
   // Monthly burn = the most recent month's expense in the trend series.
+  //
+  // ZERO BURN IS THE STRONGEST POSITION, NOT THE WEAKEST.
+  //
+  // This read `lastMonth > 0 ? ... : 0`, written to avoid dividing by zero and
+  // inverting the meaning in the process: an estate with cash in hand and no
+  // expenses last month scored 0 out of 40 on liquidity and was reported as
+  // financially unhealthy. Runway with no burn is unbounded, so it scores full
+  // -- but only if there is actually cash to run on.
   const lastMonth = trend.length ? Number(trend[trend.length - 1].expense || 0) : 0;
   const liquidityPart =
-    lastMonth > 0 ? Math.max(0, Math.min(cash / lastMonth / 3, 1)) : 0;
+    lastMonth > 0
+      ? Math.max(0, Math.min(cash / lastMonth / 3, 1))
+      : cash > 0
+      ? 1
+      : 0;
 
   return Math.round(60 * marginPart + 40 * liquidityPart);
 }
@@ -310,7 +323,18 @@ export default function Overview() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
+      {/* Follows AdminM - Dashboard: "Tea Garden Overview" with the date pill. */}
+      <PageHero
+        title="Tea Garden Overview"
+        subtitle="Monitoring cultivation and yields for today"
+        datePill={`Today, ${new Date().toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })}`}
+      />
+
       {error && (
         <div className="rounded-xl bg-rose-50 px-4 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
           {error}
@@ -318,7 +342,9 @@ export default function Overview() {
       )}
 
       {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Two-up on a phone, as in the design. One card per row wastes the
+          screen and pushes the charts below three scrolls of KPIs. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         {kpis.map((k) => {
           const Icon = KPI_ICON[k.key] || LuActivity;
           return (
@@ -328,13 +354,16 @@ export default function Overview() {
                   <div className="flex items-center gap-2">
                     <p className="text-sm text-cg-ink/60">{k.label}</p>
                   </div>
-                  <p className="mt-1 text-2xl font-extrabold text-cg-ink">
+                  {/* truncate + min-w-0 for the same reason the Inventory
+                      stock value overflowed: a flex child will not shrink
+                      below its content unless told to. */}
+                  <p className="mt-1 truncate text-xl font-extrabold text-cg-ink sm:text-2xl">
                     {k.value}
                   </p>
                   <p className="mt-1 text-xs text-cg-green">{k.delta}</p>
                 </div>
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green">
-                  <Icon size={20} />
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green sm:h-10 sm:w-10">
+                  <Icon size={17} />
                 </span>
               </div>
             </Card>
@@ -352,8 +381,9 @@ export default function Overview() {
           {leafTrend.length === 0 ? (
             <Empty>{"No leaf weighed in yet. Totals appear as supervisors record the day's pluck."}</Empty>
           ) : (
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={leafTrend}>
+          <div className="h-[260px] sm:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={leafTrend} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
               <defs>
                 <linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={GREEN} stopOpacity={0.5} />
@@ -361,8 +391,8 @@ export default function Overview() {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" />
-              <XAxis dataKey="day" fontSize={12} />
-              <YAxis fontSize={12} />
+              <XAxis dataKey="day" fontSize={11} tickMargin={8} minTickGap={12} />
+              <YAxis fontSize={11} tickMargin={6} width={48} />
               <Tooltip />
               <Area
                 type="monotone"
@@ -373,6 +403,7 @@ export default function Overview() {
               />
             </AreaChart>
           </ResponsiveContainer>
+              </div>
           )}
         </Card>
 
@@ -388,7 +419,8 @@ export default function Overview() {
               }
             </Empty>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
+            <div className="h-[260px] sm:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={payrollStatus}
@@ -406,6 +438,7 @@ export default function Overview() {
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
+              </div>
           )}
         </Card>
       </div>
@@ -424,11 +457,12 @@ export default function Overview() {
             {financials.length === 0 ? (
               <Empty>{"No ledger entries yet."}</Empty>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <ComposedChart data={financials}>
+              <div className="h-[260px] sm:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={financials} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" />
-                  <XAxis dataKey="month" fontSize={12} />
-                  <YAxis fontSize={12} />
+                  <XAxis dataKey="month" fontSize={11} tickMargin={8} minTickGap={12} />
+                  <YAxis fontSize={11} tickMargin={6} width={48} />
                   <Tooltip
                     formatter={(v) => Number(v).toFixed(1) + "k"}
                   />
@@ -455,6 +489,7 @@ export default function Overview() {
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+              </div>
             )}
           </Card>
 
@@ -468,7 +503,8 @@ export default function Overview() {
             ) : (
               <>
                 <div className="relative">
-                  <ResponsiveContainer width="100%" height={220}>
+                  <div className="h-[220px] sm:h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
                     <RadialBarChart
                       innerRadius="70%"
                       outerRadius="100%"
@@ -484,6 +520,7 @@ export default function Overview() {
                       <RadialBar background dataKey="value" cornerRadius={12} />
                     </RadialBarChart>
                   </ResponsiveContainer>
+              </div>
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                     <span className="text-4xl font-extrabold text-cg-ink">
                       {score}
@@ -514,7 +551,8 @@ export default function Overview() {
               }
             </Empty>
           ) : (
-            <ResponsiveContainer width="100%" height={280}>
+            <div className="h-[260px] sm:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={attendanceByZone}>
                 <PolarGrid stroke="#e5efe0" />
                 <PolarAngleAxis dataKey="zone" fontSize={12} />
@@ -536,6 +574,7 @@ export default function Overview() {
                 <Tooltip />
               </RadarChart>
             </ResponsiveContainer>
+              </div>
           )}
         </Card>
 
@@ -547,15 +586,17 @@ export default function Overview() {
           {zonePerf.length === 0 ? (
             <Empty>{"No field has a weigh-in today yet."}</Empty>
           ) : (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={zonePerf} layout="vertical">
+          <div className="h-[260px] sm:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={zonePerf} layout="vertical" margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" />
-              <XAxis type="number" fontSize={12} />
-              <YAxis dataKey="zone" type="category" width={40} fontSize={12} />
+              <XAxis type="number" fontSize={11} tickMargin={8} />
+              <YAxis dataKey="zone" type="category" width={56} fontSize={11} tickMargin={6} />
               <Tooltip />
               <Bar dataKey="kg" fill="#49921c" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
+              </div>
           )}
         </Card>
       </div>
