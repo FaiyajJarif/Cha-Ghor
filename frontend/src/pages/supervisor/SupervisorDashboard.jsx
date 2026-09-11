@@ -30,6 +30,13 @@ import { BTN_GHOST } from "../../lib/ui";
 import { WS_BASE } from "../../lib/config";
 import { closeSocket } from "../../lib/ws";
 import InfoTip from "../../components/admin/InfoTip";
+// The same card every mobile list in both consoles uses. Importing the admin
+// one rather than writing a supervisor copy is the point: one file owns the
+// padding, avatar size and pill shape, so all the lists move together.
+import RecordCard, {
+  CARD_PILL,
+  CARD_CHIP,
+} from "../../components/admin/RecordCard";
 import { todayISO } from "../../lib/localDate";
 
 // Tea Garden Overview — the supervisor's daily picture.
@@ -53,8 +60,12 @@ const kg = (n) =>
 
 function Card({ children, className = "" }) {
   return (
+    // min-w-0 because this is a GRID ITEM on every screen it appears on, and a
+    // grid item's automatic minimum size is min-content -- without it one long
+    // unbreakable value keeps the whole grid wider than the phone.
+    // p-4 on a phone: p-5 spends 40 of 360 pixels on padding alone.
     <div
-      className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE} ${className}`}
+      className={`min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE} ${className}`}
     >
       {children}
     </div>
@@ -95,16 +106,26 @@ function Kpi({ icon: Icon, label, value, sub, tone = "green", empty }) {
         : "bg-cg-lime text-cg-green";
   return (
     <Card>
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-bold uppercase tracking-wide text-cg-ink/50">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-bold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
-        <span className={`grid h-9 w-9 place-items-center rounded-xl ${chip}`}>
+        {/* shrink-0 or the icon chip squashes to an oval when the label is
+            long; min-w-0 above is what lets the LABEL give way instead. */}
+        <span
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${chip}`}
+        >
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-2 text-3xl font-extrabold text-cg-ink">
-        {empty ? <span className="text-2xl text-cg-ink/30">—</span> : value}
+      {/* truncate + title: "1,240 kg" has no break opportunity, so at text-3xl
+          it was the card's min-content width and kept the two-up grid wider
+          than a 360px screen. The full figure stays available on hover. */}
+      <p
+        className="mt-2 truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl"
+        title={typeof value === "string" ? value : undefined}
+      >
+        {empty ? <span className="text-xl text-cg-ink/30 sm:text-2xl">—</span> : value}
       </p>
       <p className="mt-1 text-xs text-cg-ink/50">{sub}</p>
     </Card>
@@ -312,9 +333,12 @@ export default function SupervisorDashboard() {
 
   return (
     <div className="space-y-6">
+      {/* THE HERO. On a phone the title and the live pill were on one flex-wrap
+          row with nothing containing them, so a long title pushed the pill off.
+          min-w-0 + a shrink-0 pill is the pattern used by every other hero. */}
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold text-cg-ink">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-extrabold text-cg-ink sm:text-2xl">
             Tea Garden Overview
           </h1>
           <p className="text-sm text-cg-ink/60">
@@ -334,7 +358,7 @@ export default function SupervisorDashboard() {
               ? "Connected. Weigh-ins, attendance, weather and reports update here as they happen."
               : "Not connected. These figures are correct as of the last load but will not update on their own."
           }
-          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
             live ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
           }`}
         >
@@ -363,8 +387,9 @@ export default function SupervisorDashboard() {
         </div>
       )}
 
-      {/* KPI row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* KPI row. Two-up on a phone, matching the Figma frame -- one card per
+          row would push the attendance trend three screens down. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Kpi
           icon={LuLeaf}
           label="Leaf Collection"
@@ -425,8 +450,14 @@ export default function SupervisorDashboard() {
               }
             </Empty>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={attTrend}>
+            // A CSS-SIZED WRAPPER, NOT A PIXEL HEIGHT.
+            // height={260} is measured once at mount, so it survives neither a
+            // rotate nor a resize. h-56 sm:h-72 is re-evaluated by the browser,
+            // and gives the bars room to breathe on a wide screen without
+            // eating a whole phone screen on a narrow one.
+            <div className="h-56 w-full sm:h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={attTrend} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5efe0" vertical={false} />
                 <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} />
                 <YAxis fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -437,6 +468,7 @@ export default function SupervisorDashboard() {
                 <Bar dataKey="absent" name="Absent" stackId="a" fill="#d98b8b" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           )}
         </Card>
 
@@ -518,7 +550,43 @@ export default function SupervisorDashboard() {
               {"No leaf weighed in today, so there is nothing to rank yet."}
             </Empty>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* ========== MOBILE: THE SHARED RECORD CARD ==========
+                The table is the better tool from sm up. On a phone it scrolls
+                sideways, so you read a name and then swipe away from it to see
+                the weight. RecordCard is the same shape used by every other
+                mobile list in both consoles -- identity left, number right. */}
+            <ul className="sm:hidden">
+              {topCollectors.map((c, i) => (
+                <RecordCard
+                  key={c.workerId ?? c.name}
+                  avatar={
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-cg-lime text-xs font-extrabold text-cg-green">
+                      {i + 1}
+                    </span>
+                  }
+                  title={c.name}
+                  meta={c.zone}
+                  pills={
+                    // The top collector is the one fact this card exists to
+                    // show, so it is marked rather than left to be inferred
+                    // from position -- position is lost the moment you scroll.
+                    i === 0 ? (
+                      <span className={`${CARD_PILL} bg-cg-dark text-white`}>
+                        TOP
+                      </span>
+                    ) : null
+                  }
+                  footer={
+                    <span className={`${CARD_CHIP} bg-cg-lime/50 text-cg-green`}>
+                      {kg(c.kg)} kg
+                    </span>
+                  }
+                />
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                   <tr>
@@ -546,6 +614,7 @@ export default function SupervisorDashboard() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </Card>
 
@@ -558,7 +627,8 @@ export default function SupervisorDashboard() {
             <Empty height={220}>{"No collection recorded today."}</Empty>
           ) : (
             <>
-              <ResponsiveContainer width="100%" height={200}>
+              <div className="h-48 w-full sm:h-52">
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={byZone}
@@ -575,6 +645,7 @@ export default function SupervisorDashboard() {
                   <Tooltip formatter={(v) => `${kg(v)} kg`} />
                 </PieChart>
               </ResponsiveContainer>
+              </div>
               <ul className="mt-2 space-y-1 text-sm">
                 {byZone.map((z, i) => (
                   <li key={z.zone} className="flex items-center gap-2">
@@ -608,8 +679,9 @@ export default function SupervisorDashboard() {
               }
             </Empty>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={weatherTrend}>
+            <div className="h-52 w-full sm:h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={weatherTrend} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="temp" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#1c3a29" stopOpacity={0.6} />
@@ -640,6 +712,7 @@ export default function SupervisorDashboard() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            </div>
           )}
         </Card>
 
@@ -689,7 +762,38 @@ export default function SupervisorDashboard() {
         {openCases.length === 0 ? (
           <Empty height={140}>{"Nothing open right now."}</Empty>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* MOBILE: cards. Four columns of which two are long text does not
+              survive a 360px screen -- it scrolled sideways, and the status
+              (the only column you scan for) was the one off the edge. */}
+          <ul className="sm:hidden">
+            {openCases.map((c) => (
+              <RecordCard
+                key={c.id}
+                title={c.title}
+                meta={
+                  <>
+                    #REP-{String(c.id).padStart(4, "0")}
+                    {c.zone ? ` • ${c.zone}` : ""}
+                    {c.category ? ` • ${c.category}` : ""}
+                  </>
+                }
+                pills={
+                  <span
+                    className={`${CARD_PILL} uppercase ${
+                      c.priority === "HIGH"
+                        ? "bg-rose-100 text-rose-700"
+                        : "bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    {c.priority === "HIGH" ? "Critical" : c.status}
+                  </span>
+                }
+              />
+            ))}
+          </ul>
+
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                 <tr>
@@ -730,6 +834,7 @@ export default function SupervisorDashboard() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </div>

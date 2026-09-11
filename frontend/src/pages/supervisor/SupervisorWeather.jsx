@@ -41,6 +41,8 @@ import InfoTip from "../../components/admin/InfoTip";
 import RainImpactPanel from "../../components/supervisor/RainImpactPanel";
 import WeatherBriefPanel from "../../components/supervisor/WeatherBriefPanel";
 import ErrorBoundary from "../../components/ErrorBoundary";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, { CARD_PILL } from "../../components/admin/RecordCard";
 
 // Weather Monitor.
 //
@@ -55,7 +57,7 @@ import ErrorBoundary from "../../components/ErrorBoundary";
 // yet" rather than zeroes -- 0°C and 0% humidity would look like a measurement.
 
 const CARD_STROKE = "ring-1 ring-[#13483B59]";
-const CARD = `rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`;
+const CARD = `min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE}`;
 const PAGE_SIZE = 4;
 
 // Fixed heights so an estate with one reading has the same layout as one with
@@ -128,7 +130,7 @@ function Kpi({ icon: Icon, label, value, unit, sub }) {
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-2 text-3xl font-extrabold text-cg-ink">
+      <p className="mt-2 truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl">
         {value}
         {unit ? (
           <span className="ml-1 text-base font-bold text-cg-ink/40">{unit}</span>
@@ -444,7 +446,7 @@ export default function SupervisorWeather() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-extrabold text-cg-ink">Weather Monitor</h1>
+          <h1 className="text-2xl font-extrabold text-cg-ink sm:text-3xl">Weather Monitor</h1>
           <p className="text-sm text-cg-ink/60">
             Helps monitor detailed weather information
           </p>
@@ -536,7 +538,7 @@ export default function SupervisorWeather() {
       )}
 
       {/* KPI row */}
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-4">
         <Kpi
           icon={LuThermometer}
           label="Temperature"
@@ -630,7 +632,7 @@ export default function SupervisorWeather() {
                   <div
                     key={h.time}
                     title={`${h.condition} · ${h.rainProbPct}% rain`}
-                    className={`flex min-w-[68px] flex-1 flex-col items-center gap-1 rounded-xl px-2 py-3 ${
+                    className={`flex min-w-[68px] shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-3 ${
                       h.now
                         ? "bg-[#D3FFAC] ring-1 ring-[#13483B59]"
                         : "hover:bg-cg-lime/30"
@@ -749,7 +751,49 @@ export default function SupervisorWeather() {
           <InfoTip text={'These are readings this estate actually recorded, classified by their own numbers — 12 mm of rain is HIGH, 91% humidity is MED. They are not incidents anyone typed in, and there is no "action taken" column because nothing in the system records what a supervisor did about the weather.'} />
         </div>
 
-        <div className="overflow-x-auto">
+        {/* ============ MOBILE: READINGS AS CARDS ============
+            Six columns at min-w-[780px] is over two phone screens, and
+            Severity — the only column you scan this list for — was past the
+            right edge. */}
+        <ul className="sm:hidden">
+          {pageRows.length === 0 ? (
+            <li className="px-4 py-14 text-center text-sm text-cg-ink/50">
+              {loading
+                ? "Loading…"
+                : "No readings recorded yet. Press Refresh and the first one appears here."}
+            </li>
+          ) : (
+            pageRows.map((e) => (
+              <RecordCard
+                key={e.id}
+                title={e.event}
+                meta={
+                  <>
+                    {stamp(e.observedAt)}
+                    {e.zone ? ` • ${e.zone}` : ""}
+                  </>
+                }
+                pills={
+                  <span
+                    className={`${CARD_PILL} ${SEVERITY[e.severity] || SEVERITY.NORMAL}`}
+                  >
+                    {e.severity}
+                  </span>
+                }
+                footer={
+                  <span className="text-xs text-cg-ink/60">
+                    {e.detail}
+                    {/* "measured", not "reported": these are the estate's own
+                        readings, not incidents anyone typed in. */}
+                    <span className="ml-2 text-cg-ink/40">measured</span>
+                  </span>
+                }
+              />
+            ))
+          )}
+        </ul>
+
+        <div className="hidden overflow-x-auto sm:block">
           <table className="w-full min-w-[780px] text-left text-sm">
             <thead>
               <tr className="text-[11px] uppercase tracking-wide text-cg-ink/50">
