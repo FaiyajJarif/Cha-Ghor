@@ -27,6 +27,8 @@ import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import InfoTip from "../../components/admin/InfoTip";
 import ErrorBoundary from "../../components/ErrorBoundary";
+// One card shape across all three consoles — see RecordCard.
+import RecordCard, { CARD_PILL, CARD_CHIP } from "../../components/admin/RecordCard";
 import { WS_BASE } from "../../lib/config";
 
 // The live map touches Leaflet (window/document) + a CSS side-effect import, so
@@ -137,16 +139,22 @@ function shortDate(d) {
 
 function StatCard({ icon: Icon, label, value, unit, hint }) {
   return (
-    <div className="rounded-2xl border border-cg-lime/60 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-cg-dark/60">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, and
+    // a weight or taka figure has no break opportunity, so without this the
+    // KPI grid grew wider than the phone and dragged the page with it.
+    <div className="min-w-0 rounded-2xl border border-cg-lime/60 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-dark/60">
           {label}
         </p>
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-cg-lime text-cg-green">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-cg-lime text-cg-green">
           <Icon size={16} />
         </span>
       </div>
-      <p className="mt-2 text-2xl font-bold text-cg-darker">
+      <p
+        className="mt-2 truncate text-xl font-bold tabular-nums text-cg-darker sm:text-2xl"
+        title={typeof value === "string" ? value : undefined}
+      >
         {value}
         {unit ? (
           <span className="ml-1 text-sm font-semibold text-cg-dark/50">
@@ -1184,7 +1192,61 @@ export default function Supply() {
           <p className="p-5 text-sm text-cg-dark/50">No shipments yet.</p>
         ) : (
           <>
-            <div className="flex-1 overflow-x-auto">
+            {/* ============ MOBILE: SHIPMENTS AS CARDS ============
+                min-w-[820px] is well over two phone screens, and the status
+                selector — the control this table exists for — was the second
+                column from the right. The status dropdown is kept, because a
+                read-only shipment list on a phone would be a downgrade, not a
+                mobile version. */}
+            <ul className="sm:hidden">
+              {shipSlice.map((s) => (
+                <RecordCard
+                  key={s.id}
+                  title={s.code}
+                  meta={
+                    <>
+                      {s.origin} → {s.destination}
+                      {s.vehicle ? ` • ${s.vehicle}` : ""}
+                    </>
+                  }
+                  pills={
+                    s.live ? (
+                      <span className={`${CARD_PILL} bg-cg-lime text-cg-green`}>
+                        ● live
+                      </span>
+                    ) : null
+                  }
+                  onClick={() => setSelectedId(s.id)}
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                        {num(s.weightKg)} kg
+                      </span>
+                      {isAdmin ? (
+                        <select
+                          className="h-9 rounded-lg border border-cg-lime/70 bg-white px-2 text-xs font-semibold text-cg-dark focus:border-cg-green focus:outline-none"
+                          value={s.status}
+                          // stopPropagation: the card itself focuses the map, and
+                          // changing status must not also move the map.
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => changeStatus(s, e.target.value)}
+                        >
+                          {STEP_ORDER.map((st) => (
+                            <option key={st} value={st}>
+                              {st.replace(/_/g, " ")}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Badge map={SHIP_STATUS_BADGE} value={s.status} />
+                      )}
+                    </>
+                  }
+                />
+              ))}
+            </ul>
+
+            <div className="hidden flex-1 overflow-x-auto sm:block">
               <table className="w-full min-w-[820px] text-left text-sm">
                 <thead>
                   <tr className="bg-[#D3FFAC] text-[11px] uppercase tracking-wide text-cg-dark/60">
@@ -1431,7 +1493,47 @@ export default function Supply() {
           </p>
         ) : (
           <>
-            <div className="flex-1 overflow-x-auto">
+            {/* ============ MOBILE: SALES AS CARDS ============
+                NINE columns at min-w-[720px] — the widest table in the console.
+                Net revenue, which is the only figure anyone opens this for, sat
+                seventh. */}
+            <ul className="sm:hidden">
+              {sales.items.map((t) => (
+                <RecordCard
+                  key={t.id}
+                  title={t.buyer}
+                  meta={
+                    <>
+                      {t.trxId} • {t.txnDate}
+                      {t.grade ? ` • ${t.grade}` : ""}
+                      {t.batchCode ? ` / ${t.batchCode}` : ""}
+                    </>
+                  }
+                  pills={
+                    <>
+                      <Badge map={PAY_BADGE} value={t.payStatus} />
+                      {/* SHIP_BADGE, matching the desktop row at the bottom of
+                          this table. SHIP_STATUS_BADGE is the SHIPMENTS map and
+                          keys off different values — using it here would render
+                          every sale's ship status unstyled. */}
+                      <Badge map={SHIP_BADGE} value={t.shipStatus} />
+                    </>
+                  }
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-cg-lime/40 text-cg-green`}>
+                        {num(t.volumeKg)} kg @ {num(t.ratePerKg)}
+                      </span>
+                      <span className={`${CARD_CHIP} ml-auto bg-cg-dark text-white`}>
+                        {num(t.netRevenue)}
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </ul>
+
+            <div className="hidden flex-1 overflow-x-auto sm:block">
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead>
                   <tr className="bg-[#D3FFAC] text-[11px] uppercase tracking-wide text-cg-dark/60">
