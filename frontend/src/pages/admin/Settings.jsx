@@ -19,6 +19,7 @@ import { useAuth } from "../../context/AuthContext";
 import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
+import SmsControlPanel from "../../components/admin/SmsControlPanel";
 
 const FIELD =
   "mt-1 w-full rounded-lg border border-cg-green/20 bg-cg-lime/30 px-3 py-2 text-sm outline-none focus:border-cg-green";
@@ -572,6 +573,12 @@ export default function Settings() {
           Timezone: Asia/Dhaka (GMT+6) · fixed for this estate.
         </p>
       </SectionCard>
+
+      {/* Outgoing SMS: the master switch, the automatic-notice switch, and a
+          send-one box. Admin-only, and every control behind it defaults to off
+          — configuring a real transport must never be enough on its own to
+          start spending SIM credit. */}
+      {isAdmin && <SmsControlPanel />}
 
       {/* Security */}
       <SectionCard

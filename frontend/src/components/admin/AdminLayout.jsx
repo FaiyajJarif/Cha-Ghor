@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from "react-router-dom";
 import AdminSidebar from "./AdminSidebar";
 import AdminTopbar from "./AdminTopbar";
+import AdminBottomNav from "./AdminBottomNav";
 import ChaBot from "./ChaBot";
 import OfflineBanner from "../OfflineBanner";
 
@@ -55,10 +56,26 @@ export default function AdminLayout() {
       <AdminSidebar />
       <div className="flex min-h-screen flex-col md:ml-60">
         <AdminTopbar />
-        <main className="flex-1 p-6">
+        {/* Tighter padding on a phone -- p-6 on a 360px screen spends 13% of
+            the width on margins. pb-24 keeps the last card clear of the fixed
+            bottom bar, which would otherwise cover it with no way to scroll
+            further. */}
+        {/* overflow-x-hidden is a GUARD, not the fix. The real fix is min-w-0
+            on the KPI cards. But one un-shrinkable element anywhere on a page
+            widens the whole document, and then EVERY card below it renders
+            against a page wider than the phone and appears to run off the
+            right edge -- which is what this kept being reported as. Clipping
+            one element inside the page is a much smaller failure than shifting
+            the entire console sideways.
+
+            Safe here: the topbar is sticky but is a SIBLING of main, not a
+            descendant, so this scroll container does not break it, and every
+            modal portals to document.body. */}
+        <main className="flex-1 overflow-x-hidden p-4 pb-24 sm:p-6 md:pb-6">
           <Outlet />
         </main>
       </div>
+      <AdminBottomNav />
       <ChaBot suggestions={suggestionsFor(pathname)} />
       <OfflineBanner />
     </div>
