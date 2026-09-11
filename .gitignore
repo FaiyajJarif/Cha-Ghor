@@ -140,3 +140,13 @@ tmp/
 # LOCAL SNAPSHOT TOOL (cg-snap.sh), if used
 # ============================================================
 .cg-snapshots/
+backups/
+
+backend/uploads/
+ai_service/dataset/
+frontend/test-results/
+frontend/demo-report/
+frontend/demo/
+frontend/playwright-report/
+backups/
+chaghor_backup.sql

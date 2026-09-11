@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import RecordCard, { CARD_PILL, CARD_CHIP } from "./RecordCard";
 import {
   LuX,
   LuSearch,
@@ -193,12 +194,31 @@ export default function LeafReviewDrawer({ open, onClose }) {
   if (!open) return null;
 
   return createPortal(
-    <>
-      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
+    // ========== THE SAME CENTRED CARD AS ADD WORKER / ADD ITEM ==========
+    //     This was an edge-to-edge bottom sheet -- glued to the bottom, full
+    //     bleed, top corners only. Add Worker and Add Item are centred cards
+    //     with a p-4 gutter and all four corners rounded, so this read as a
+    //     different kind of object, and with no side gutter it looked like it
+    //     ran off the screen instead of sitting on the page.
+    //
+    //     Shell copied from Inventory's Add Item: grid place-items-center +
+    //     p-4 on the backdrop, w-full max-w-* rounded-2xl on the card. The
+    //     backdrop is now the positioning parent rather than a separate layer, so the
+    //     card is centred rather than anchored to an edge.
+    //
+    //     The grab handle is gone with it: it said "this slides", which a
+    //     centred card does not. The header X is the dismiss control.
+    <div
+      className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      {/* The backdrop closes; a click inside the card must not bubble up to
+          it, or every tap in the panel would dismiss it. */}
       <aside
-        className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-4xl flex-col bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
         role="dialog"
         aria-label="Leaf collection review"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-start justify-between gap-3 bg-cg-dark px-6 py-4">
           <div>
@@ -310,7 +330,48 @@ export default function LeafReviewDrawer({ open, onClose }) {
                 : "No weigh-in matches that search."}
             </p>
           ) : (
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <>
+            {/* ========== MOBILE: THE SAME CARD AS EVERY OTHER LIST ==========
+                This was a bespoke 2-up tile with its own padding and type
+                sizes -- a fourth card shape. It now uses RecordCard, so a
+                weigh-in row and a worker row and a payslip row all share one
+                rhythm.
+
+                The weight is the largest thing in the footer because it is what
+                this screen is read for, but it sits in the shared chip shape
+                rather than inventing its own. */}
+            <ul className="sm:hidden">
+              {pageRows.map((r) => (
+                <RecordCard
+                  key={r.id}
+                  avatar={
+                    r.photoUrl ? (
+                      <LeafPhotoThumb entry={r} onReviewed={load} />
+                    ) : (
+                      <span className="grid h-9 w-9 place-items-center rounded-full bg-cg-lime text-[11px] font-bold text-cg-green">
+                        {(r.workerName || "?").slice(0, 2).toUpperCase()}
+                      </span>
+                    )
+                  }
+                  title={r.workerName}
+                  meta={<>Zone: {r.zone || "—"}</>}
+                  pills={
+                    r.grade ? (
+                      <span className={`${CARD_PILL} bg-cg-lime/60 text-cg-green`}>
+                        Grade {r.grade}
+                      </span>
+                    ) : null
+                  }
+                  footer={
+                    <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                      {Number(r.weightKg || 0).toFixed(1)} kg
+                    </span>
+                  }
+                />
+              ))}
+            </ul>
+
+            <table className="hidden w-full min-w-[640px] text-left text-sm sm:table">
               <thead>
                 <tr className="bg-cg-dark text-[11px] uppercase tracking-wide text-white/90">
                   <th className="px-4 py-3 font-bold">Photo</th>
@@ -371,6 +432,7 @@ export default function LeafReviewDrawer({ open, onClose }) {
                 ))}
               </tbody>
             </table>
+            </>
           )}
         </div>
 
@@ -412,7 +474,7 @@ export default function LeafReviewDrawer({ open, onClose }) {
           </div>
         </div>
       </aside>
-    </>,
+    </div>,
     document.body,
   );
 }
