@@ -26,6 +26,8 @@ import ZonePicker from "../../components/supervisor/ZonePicker";
 import ZoneHeatmap from "../../components/supervisor/ZoneHeatmap";
 import WorkerMonthModal from "../../components/supervisor/WorkerMonthModal";
 import AttendanceAiPanel from "../../components/supervisor/AttendanceAiPanel";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, { CARD_PILL } from "../../components/admin/RecordCard";
 import { todayISO } from "../../lib/localDate";
 
 // Supervisor attendance register.
@@ -88,16 +90,27 @@ function Kpi({ icon: Icon, label, value, sub, tone = "green" }) {
         ? "bg-amber-100 text-amber-700"
         : "bg-cg-lime text-cg-green";
   return (
-    <div className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`}>
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-bold uppercase tracking-wide text-cg-ink/50">
+    // min-w-0 + truncate: this is a grid item, and a grid item's automatic
+    // minimum size is min-content -- a count with no break opportunity kept
+    // the two-up KPI grid wider than a 360px screen and dragged the whole
+    // page sideways with it.
+    <div className={`min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-bold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
-        <span className={`grid h-9 w-9 place-items-center rounded-xl ${chip}`}>
+        <span
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${chip}`}
+        >
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-2 text-3xl font-extrabold text-cg-ink">{value}</p>
+      <p
+        className="mt-2 truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl"
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </p>
       {sub ? <p className="mt-1 text-xs text-cg-ink/50">{sub}</p> : null}
     </div>
   );
@@ -574,7 +587,9 @@ export default function SupervisorAttendance() {
       )}
 
       {/* KPIs — driven by the draft, so they move as you mark */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Two-up on a phone, as in the Figma frame. One per row would push the
+          register itself two screens down. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Kpi
           icon={LuUsers}
           label="Total Workers"
@@ -686,7 +701,113 @@ export default function SupervisorAttendance() {
               : "No active workers to mark."}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* ================= MOBILE: THE REGISTER AS CARDS =================
+              min-w-[760px] is more than two phone screens wide. Marking
+              attendance meant reading a name, swiping right to find the button,
+              and no longer knowing whose row you were on -- on the one screen
+              where marking the WRONG person costs someone a day's wage.
+
+              Same RecordCard as every other mobile list. The four status
+              buttons are a segmented row in the footer, all four visible at
+              once: the desktop "cycle" button needs up to three taps to reach
+              'leave' and gives no clue what the next tap does, which is a
+              worse deal on a touch screen than four honest targets. */}
+          <ul className="sm:hidden">
+            {pageRows.map((r) => (
+              <RecordCard
+                key={r.workerId}
+                avatar={
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-cg-lime text-[11px] font-bold text-cg-green">
+                    {(r.name || "?").slice(0, 2).toUpperCase()}
+                  </span>
+                }
+                title={r.name}
+                meta={
+                  <>
+                    #CG{String(r.workerId).padStart(3, "0")}
+                    {r.jobRole ? ` • ${r.jobRole}` : ""}
+                  </>
+                }
+                pills={
+                  <span
+                    className={`${CARD_PILL} bg-cg-lime/40 uppercase ${
+                      r.status ? STATUS_STYLE[r.status] : "text-cg-ink/30"
+                    }`}
+                  >
+                    {r.status || "Not marked"}
+                  </span>
+                }
+                footer={
+                  <>
+                    {/* w-full so the segmented row owns its own line, then
+                        flex-1 shares it four ways -- 40px tall because this is
+                        the control the whole screen exists for. */}
+                    <div className="flex w-full gap-1">
+                      {CYCLE.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setStatus(r.workerId, s)}
+                          aria-pressed={r.status === s}
+                          aria-label={`Mark ${r.name} ${s}`}
+                          className={`h-10 flex-1 rounded-lg text-[11px] font-bold uppercase transition active:scale-95 ${
+                            r.status === s
+                              ? "bg-cg-dark text-white shadow"
+                              : "bg-cg-lime/30 text-cg-ink/60 ring-1 ring-cg-green/15"
+                          }`}
+                        >
+                          {s === "leave" ? "Leave" : s.slice(0, 1)}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Only someone who turned up can be sent to a field. */}
+                    {(r.status === "present" || r.status === "late") && (
+                      <div className="w-full">
+                        <ZonePicker
+                          value={r.zoneId}
+                          zones={zones}
+                          homeZoneName={r.homeZoneName}
+                          onChange={(id) => setZone(r.workerId, id)}
+                        />
+                      </div>
+                    )}
+
+                    {/* Blank rather than defaulted to 0: "late by an amount
+                        nobody wrote down" is a different fact from "on time". */}
+                    {r.status === "late" && (
+                      <span className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={0}
+                          max={1440}
+                          value={r.lateMinutes ?? ""}
+                          onChange={(e) => setLateMinutes(r.workerId, e.target.value)}
+                          placeholder="—"
+                          aria-label={`Minutes late for ${r.name}`}
+                          className="w-16 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-1 text-xs font-semibold text-amber-800 outline-none focus:border-amber-500"
+                        />
+                        <span className="text-[10px] font-semibold text-cg-ink/40">
+                          min late
+                        </span>
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setMonthFor({ id: r.workerId, name: r.name })}
+                      className="ml-auto rounded-lg bg-cg-lime/40 px-2 py-1 text-xs font-semibold text-cg-green"
+                    >
+                      This month
+                    </button>
+                  </>
+                }
+              />
+            ))}
+          </ul>
+
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                 <tr>
@@ -778,6 +899,7 @@ export default function SupervisorAttendance() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {/* Pagination */}

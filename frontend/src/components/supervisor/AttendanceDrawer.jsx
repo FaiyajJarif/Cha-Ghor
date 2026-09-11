@@ -9,8 +9,10 @@ import {
   LuChevronRight,
 } from "react-icons/lu";
 import ZonePicker from "./ZonePicker";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, { CARD_PILL } from "../admin/RecordCard";
 
-// "Daily Attendance" — the full register, sliding in from the right.
+// "Daily Attendance" — the full register, as a centred dialog.
 //
 // This is the working surface: the supervisor marks everyone here, with search,
 // zone filtering, bulk actions and its own pagination, then saves without
@@ -121,15 +123,22 @@ export default function AttendanceDrawer({
 
   return createPortal(
     <>
+      {/* ========== THE SAME CENTRED CARD AS ADD WORKER / ADD ITEM ==========
+          `inset-y-0 right-0 w-full` is a full-height, full-width white slab on
+          a phone -- square corners, edge to edge, no gutter. Every other dialog
+          in the product is a centred card with a p-4 gutter and rounded
+          corners. The backdrop is now the positioning parent, so this is
+          centred rather than anchored to an edge. */}
       <div
-        className="fixed inset-0 z-[1200] bg-black/40"
+        className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4"
         onClick={onClose}
-        aria-hidden
-      />
+      >
       <aside
-        className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-3xl flex-col bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
         role="dialog"
         aria-label="Daily attendance register"
+        /* The backdrop closes; a click inside must not bubble up to it. */
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#13483B59] px-6 py-4">
@@ -168,7 +177,10 @@ export default function AttendanceDrawer({
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3 px-6 py-4">
-          <label className="relative flex min-w-[14rem] flex-1 items-center">
+          {/* min-w-[14rem] is 224px of un-shrinkable width in a 360px panel
+              that also holds a zone select — it forced the row wider than the
+              screen. flex-1 with min-w-0 lets it give way instead. */}
+          <label className="relative flex min-w-0 flex-1 items-center sm:min-w-[14rem]">
             <LuSearch
               size={15}
               className="pointer-events-none absolute left-3 text-cg-ink/40"
@@ -193,8 +205,67 @@ export default function AttendanceDrawer({
         </div>
 
         {/* Register */}
-        <div className="flex-1 overflow-y-auto px-6">
-          <div className="overflow-hidden rounded-t-xl">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6">
+          {/* ============ MOBILE: THE REGISTER AS CARDS ============
+              min-w-[640px] inside a 360px panel scrolls sideways, and Status —
+              the only column you are here to change — is the one off the edge.
+              Same RecordCard as every other mobile list. */}
+          <ul className="sm:hidden">
+            {pageRows.length === 0 ? (
+              <li className="px-4 py-12 text-center text-sm text-cg-ink/50">
+                No workers match that search.
+              </li>
+            ) : (
+              pageRows.map((r) => (
+                <RecordCard
+                  key={r.workerId}
+                  avatar={<Avatar name={r.name} />}
+                  title={r.name}
+                  meta={
+                    <>
+                      CG{String(r.workerId).padStart(3, "0")}
+                      {r.jobRole ? ` • ${r.jobRole}` : ""}
+                    </>
+                  }
+                  pills={
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSetStatus(
+                          r.workerId,
+                          CYCLE[(CYCLE.indexOf(r.status) + 1) % CYCLE.length],
+                        )
+                      }
+                      title="Tap to change"
+                      className={`${CARD_PILL} uppercase ${
+                        r.status ? STATUS_PILL[r.status] : "bg-cg-lime/50 text-cg-ink/40"
+                      }`}
+                    >
+                      {r.status || "Not marked"}
+                    </button>
+                  }
+                  footer={
+                    r.status === "present" || r.status === "late" ? (
+                      <div className="w-full">
+                        <ZonePicker
+                          value={r.zoneId}
+                          zones={zones}
+                          homeZoneName={r.homeZoneName}
+                          onChange={(id) => onSetZone(r.workerId, id)}
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-xs text-cg-ink/35">
+                        {r.homeZoneName}
+                      </span>
+                    )
+                  }
+                />
+              ))
+            )}
+          </ul>
+
+          <div className="hidden overflow-hidden rounded-t-xl sm:block">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
                 <tr className="bg-cg-dark text-[11px] uppercase tracking-wide text-white/90">
@@ -343,6 +414,7 @@ export default function AttendanceDrawer({
           </div>
         </div>
       </aside>
+      </div>
     </>,
     document.body,
   );
