@@ -1,0 +1,29 @@
+# What NOT to send to the Docker build.
+#
+# Everything in this directory is uploaded to the build daemon before the first
+# instruction runs. Without this file that includes target/ (20 MB of local
+# build output) and uploads/ (66 MB of case-evidence photos) -- ~86 MB shipped
+# on every deploy, to be immediately overwritten by the build or ignored.
+#
+# target/ is the important one for correctness, not just speed: COPY src ./src
+# does not bring it in, but a stale local target/ in the context has caused
+# enough confusion elsewhere that excluding it is worth the line.
+
+target/
+uploads/
+.mvn/timing.properties
+
+# Secrets must never enter an image layer. Nothing here should be committed
+# anyway, but a build context is not a git checkout -- it is whatever is on
+# disk, including files git ignores.
+*.env
+.env
+*.p12
+*.keystore
+dev-keystore.p12
+
+# Local noise
+.DS_Store
+*.log
+.idea/
+.vscode/
