@@ -20,6 +20,46 @@
 
     <properties>
         <java.version>17</java.version>
+
+        <!-- ================================================================
+             Surefire tag filtering, driven by PROPERTIES rather than by
+             overriding the plugin config inside the profile.
+             ================================================================
+             The first attempt put <excludedGroups>selenium</excludedGroups> in
+             the base build and tried to clear it from the profile with an empty
+             <excludedGroups/>. Maven MERGES a profile plugin configuration into
+             the base one, and an empty element does not reliably erase an
+             inherited value, so the build ended up both including and excluding
+             the same tag. Surefire then matched nothing and reported, cheerfully,
+             "Tests run: 0" with BUILD SUCCESS. A green build that ran no tests
+             is the worst possible failure mode: it looks like everything passed.
+
+             Properties have no merge ambiguity. The profile just sets them.
+        -->
+        <surefire.groups/>
+        <surefire.excludedGroups>selenium</surefire.excludedGroups>
+
+        <!-- ================================================================
+             SELENIUM VERSION, SET AS A PROPERTY. THIS MATTERS.
+             ================================================================
+             selenium-java is an AGGREGATOR pom: it pulls selenium-api,
+             selenium-remote-driver, selenium-chrome-driver, selenium-safari-
+             driver and more.
+
+             Declaring <version>4.47.0</version> on the aggregator alone put
+             4.47.0 on the classpath but left every MODULE under it pinned to
+             whatever spring-boot-dependencies manages, which is 4.25.0 for
+             Boot 3.4.1. (No double hyphens in here. See the surefire comment.)
+             The proof was in a test run: Selenium printed
+             "Build info: version: '4.25.0'" while the pom said 4.47.0. A
+             mismatched aggregator and modules is the kind of thing that works
+             until one class moves between artifacts.
+
+             spring-boot-dependencies drives all of them from this property, so
+             setting it here keeps the whole set on one version. The dependency
+             below deliberately carries NO <version> now: one source of truth.
+        -->
+        <selenium.version>4.47.0</selenium.version>
     </properties>
 
     <dependencies>
@@ -122,6 +162,31 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- ================================================================
+             SELENIUM - browser tests for the CSE-3412 testing requirement.
+             ================================================================
+             test scope, so it is never packaged into the running application.
+
+             4.6+ ships Selenium Manager, which downloads a chromedriver
+             matching the installed Chrome by itself. Do NOT add WebDriverManager
+             or commit a chromedriver binary; both exist in older tutorials and
+             both are now a source of version-mismatch failures rather than a
+             cure for them.
+
+             These tests are EXCLUDED from `./mvnw test` by the surefire config
+             below, because they need Chrome plus a running backend and Vite.
+             Run them deliberately:  ./mvnw test -Pselenium
+        -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+            <!-- Version comes from the selenium.version property above, which
+                 spring-boot-dependencies applies to every selenium module.
+                 Do not put a <version> back here: it would pin the aggregator
+                 while leaving the modules behind. -->
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -154,6 +219,33 @@
                             <version>0.2.0</version>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+            <!-- ============================================================
+                 SUREFIRE: keep browser tests OUT of the normal build.
+                 ============================================================
+                 The Selenium classes are tagged @Tag("selenium"). Excluding
+                 that tag by default means `./mvnw test` and any CI build stay
+                 fast and headless-safe: they need no Chrome, no Vite and no
+                 backend on :8080.
+
+                 Without this, every `./mvnw spring-boot:run` preceded by a test
+                 phase would try to open a browser and fail on a machine that
+                 has none, which looks like a broken build rather than a
+                 missing browser. The `selenium` profile below flips it.
+
+                 (Note for anyone editing these comments: a double hyphen is
+                 ILLEGAL inside an XML comment. Writing an em dash as two
+                 hyphens here makes the whole pom unparseable, and Maven then
+                 reports a malformed POM rather than a comment problem.) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <groups>${surefire.groups}</groups>
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
 
@@ -190,4 +282,53 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- ====================================================================
+         ./mvnw test -Pselenium     run ONLY the browser tests
+         ./mvnw test                run everything else, no browser needed
+         ====================================================================
+         `groups` selects the tag instead of excluding it, so this profile runs
+         the Selenium suite and nothing else. The empty <excludedGroups/> is
+         required: a profile adds to the base configuration rather than
+         replacing it, so without clearing it the build would both include and
+         exclude the same tag and silently run zero tests.
+
+         Chrome opens visibly by default. Add -Dselenium.headless=true for CI or
+         over SSH. -->
+    <profiles>
+        <profile>
+            <id>selenium</id>
+            <properties>
+                <!-- Include the tag, and clear the exclusion. Setting the two
+                     properties is unambiguous; overriding the plugin config
+                     from here was not. See the note beside their defaults. -->
+                <surefire.groups>selenium</surefire.groups>
+                <surefire.excludedGroups/>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <!-- One browser at a time. These tests share one
+                                 database and one estate: running them in
+                                 parallel would have two of them settling and
+                                 generating payroll over each other. Safari also
+                                 permits only ONE WebDriver session at a time, so
+                                 this is a hard requirement there, not a
+                                 preference. -->
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
+                            <!-- Surefire skips the whole run, quietly, when a
+                                 tag filter matches nothing. Fail instead: a
+                                 green build that ran zero tests is worse than a
+                                 red one, because nobody investigates green. -->
+                            <failIfNoSpecifiedTests>true</failIfNoSpecifiedTests>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

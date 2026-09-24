@@ -29,7 +29,7 @@ import { closeSocket } from "../../lib/ws";
 // seen. The report screen is different: there the worker has tapped something
 // and is waiting to be told what it was. Speech belongs there, not here.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);

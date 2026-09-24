@@ -1,5 +1,7 @@
 import { Outlet } from "react-router-dom";
+import { LuLeaf } from "react-icons/lu";
 import WorkerSidebar from "./WorkerSidebar";
+import WorkerBottomNav from "./WorkerBottomNav";
 import NotificationBell from "../admin/NotificationBell";
 import OfflineBanner from "../OfflineBanner";
 import { useAuth } from "../../context/AuthContext";
@@ -57,35 +59,37 @@ export default function WorkerLayout() {
             way back to another screen was to scroll to the top first.
             The sidebar is already `fixed`; this makes the header behave the
             same way instead of half the chrome staying put and half leaving. */}
-        <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 bg-[#C0F28B] px-6 py-3">
-          {/* Mobile nav. The sidebar is md:flex only, and unlike the other two
-              consoles this one is genuinely phone-first — losing the sidebar
-              must not mean losing the navigation.
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-2 bg-[#C0F28B] px-4 py-3 sm:px-6">
+          {/* THE MOBILE NAV THAT WAS HERE HAS MOVED TO WorkerBottomNav.
+              It was five raw <a href> anchors, which in a single-page app is a
+              full browser reload per tap -- on the one console most likely to
+              be used offline, in a field, by someone with queued work in the
+              outbox. See WorkerBottomNav for the rest of the reasoning.
 
-              FIVE entries here against four in WORKER_NAV, and that is correct:
-              settings lives in the sidebar footer, which does not exist on a
-              phone, so it has to appear here or it is unreachable. */}
-          <nav className="flex gap-1 overflow-x-auto md:hidden">
-            {[
-              ["/worker", "প্রোফাইল"],
-              ["/worker/notices", "খবর"],
-              ["/worker/wages", "বেতন"],
-              ["/worker/report", "রিপোর্ট"],
-              ["/worker/settings", "সেটিংস"],
-            ].map(([to, label]) => (
-              <a
-                key={to}
-                href={to}
-                className="shrink-0 rounded-lg bg-white/60 px-3 py-1.5 text-xs font-bold text-cg-ink"
-              >
-                {label}
-              </a>
-            ))}
-          </nav>
+              The brand takes its place below md: it only exists in the sidebar,
+              and the sidebar is `hidden md:flex`, so the header opened with
+              nothing on the left and everything jammed against the right. */}
+          <div className="flex min-w-0 items-center gap-2 md:hidden">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-cg-dark text-white">
+              <LuLeaf size={17} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate font-extrabold leading-none text-cg-ink">
+                Cha Ghor
+              </p>
+              <p className="truncate text-[10px] uppercase tracking-wide text-cg-ink/60">
+                Tea Garden Management
+              </p>
+            </div>
+          </div>
 
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-4">
             <NotificationBell />
-            <div className="text-right">
+            {/* The name is the first thing to go on a narrow screen: the brand
+                on the left and the photo on the right already say who and where
+                you are, and two text blocks in one 360px bar leaves room for
+                neither. */}
+            <div className="hidden text-right sm:block">
               <p className="text-sm font-bold leading-tight text-cg-ink">
                 {me?.nameBn || me?.fullName || user?.displayName || user?.username || "কর্মী"}
               </p>
@@ -103,10 +107,19 @@ export default function WorkerLayout() {
             />
           </div>
         </header>
-        <main className="flex-1 p-6">
+        {/* p-6 on a 360px screen spends 13% of the width on margins.
+            pb-24 keeps the last card clear of the fixed bottom bar, which
+            would otherwise cover it with no way to scroll further.
+            overflow-x-hidden is a guard: one un-shrinkable element anywhere
+            widens the whole document, and then every card renders against a
+            page wider than the phone and looks like it runs off the right
+            edge. Safe here -- the header is sticky but is a SIBLING of main,
+            not a descendant, and modals portal to document.body. */}
+        <main className="flex-1 overflow-x-hidden p-4 pb-24 sm:p-6 md:pb-6">
           <Outlet />
         </main>
       </div>
+      <WorkerBottomNav />
       <OfflineBanner />
     </div>
   );

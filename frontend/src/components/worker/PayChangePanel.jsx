@@ -20,7 +20,7 @@ import api from "../../api/client";
 // be deducted because net floors at zero. Leaving that one out made an earlier
 // version overstate a fall by ৳2,300.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -57,6 +57,11 @@ const LABEL = {
     up: "অগ্রিম কম কাটা হয়েছে",
     down: "অগ্রিম বেশি কাটা হয়েছে",
     why: "আগে নেওয়া অগ্রিম সমন্বয়",
+  },
+  overdrawRecovery: {
+    up: "বেশি দেওয়া টাকা কম ফেরত নেওয়া হয়েছে",
+    down: "বেশি দেওয়া টাকা বেশি ফেরত নেওয়া হয়েছে",
+    why: "আগের একটি দিনের হিসাব ঠিক করা হয়েছিল",
   },
   otherDeduction: {
     up: "অন্য কর্তন কম",

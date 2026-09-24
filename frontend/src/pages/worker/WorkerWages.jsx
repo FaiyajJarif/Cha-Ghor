@@ -8,6 +8,11 @@ import DailyLedger from "../../components/worker/DailyLedger";
 import PayChangePanel from "../../components/worker/PayChangePanel";
 import MyPayslip from "../../components/worker/MyPayslip";
 import LoanRequestModal from "../../components/worker/LoanRequestModal";
+// One card shape across all three consoles — see RecordCard.
+import RecordCard, {
+  CARD_PILL,
+  CARD_CHIP,
+} from "../../components/admin/RecordCard";
 import {
   listenOnce,
   heardLoan,
@@ -35,7 +40,7 @@ import {
 // because a worker who reads a mid-month figure as final has been misled by the
 // one screen that was supposed to stop that happening.
 
-const CARD = "rounded-2xl bg-white p-5 shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white p-4 shadow ring-1 ring-[#13483B]/10 sm:p-5";
 
 // Bangla digits, because the rest of this console is Bangla and a plucker
 // reading ৳৩,২৬০ should not have to switch numeral systems mid-sentence.
@@ -88,6 +93,7 @@ const EARNINGS = [
 const DEDUCTIONS = [
   ["loanDeduction", "ঋণ কর্তন", "চলতি ঋণ থেকে কাটা হয়েছে"],
   ["advanceRecovery", "অগ্রিম সমন্বয়", "আগে নেওয়া অগ্রিম টাকা"],
+  ["overdrawRecovery", "আগের বেশি দেওয়া ফেরত", "হিসাব ঠিক করার পর বেশি দেওয়া টাকা"],
   ["otherDeduction", "অন্যান্য কর্তন", "অফিস থেকে যোগ করা"],
 ];
 
@@ -219,7 +225,7 @@ export default function WorkerWages() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-extrabold text-[#14493B]">বেতন ও ঋণ</h1>
+          <h1 className="text-2xl font-extrabold text-[#14493B] sm:text-3xl">বেতন ও ঋণ</h1>
           <p className="text-sm text-[#14493B]/60">
             আপনার মজুরি কীভাবে হিসাব হলো, কত কাটা হয়েছে এবং হাতে কত পাবেন
           </p>
@@ -382,7 +388,7 @@ export default function WorkerWages() {
                     {cur.provisional ? "এখন পর্যন্ত হিসাব" : "চূড়ান্ত"}
                   </p>
                 </div>
-                <p className="text-3xl font-extrabold tabular-nums text-white">
+                <p className="truncate text-2xl font-extrabold tabular-nums text-white sm:text-3xl">
                   {taka(cur.netPayable)}
                 </p>
               </div>
@@ -415,7 +421,7 @@ export default function WorkerWages() {
                   </>
                 ) : (
                   <>
-                    <p className="mt-2 text-3xl font-extrabold tabular-nums text-[#14493B]">
+                    <p className="mt-2 truncate text-2xl font-extrabold tabular-nums text-[#14493B] sm:text-3xl">
                       {taka(loans.totalOutstanding)}
                     </p>
                     <p className="text-xs text-[#14493B]/55">এখনো বাকি আছে</p>
@@ -557,7 +563,50 @@ export default function WorkerWages() {
           <div className="bg-[#C0F28B] px-5 py-3">
             <h2 className="font-bold text-[#14493B]">আগের মাসের মজুরি</h2>
           </div>
-          <div className="overflow-x-auto">
+          {/* ============ MOBILE: THE WAGE HISTORY AS CARDS ============
+              min-w-[640px] is nearly two phone screens. নেট — the one number a
+              worker opens this screen to see — sat in the fourth column, off
+              the right edge, reachable only by swiping away from the month it
+              belongs to.
+
+              Same RecordCard as every other mobile list in the product. Net is
+              the dark chip because it is what actually reached them; gross and
+              deductions sit beside it so the arithmetic is still checkable. */}
+          <ul className="sm:hidden">
+            {history.map((p) => {
+              const cut =
+                Number(p.loanDeduction || 0) +
+                Number(p.advanceRecovery || 0) +
+                Number(p.otherDeduction || 0);
+              const s = STATUS_BN[p.status] || STATUS_BN.draft;
+              return (
+                <RecordCard
+                  key={`${p.periodStart}-${p.periodEnd}`}
+                  title={monthLabel(p.periodStart)}
+                  pills={
+                    <span className={`${CARD_PILL} ${s.tone}`}>{s.label}</span>
+                  }
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-[#14493B] text-white`}>
+                        {taka(p.netPayable)}
+                      </span>
+                      <span className={`${CARD_CHIP} bg-cg-lime/40 text-[#14493B]`}>
+                        মোট {taka(p.gross)}
+                      </span>
+                      {cut > 0 && (
+                        <span className={`${CARD_CHIP} bg-rose-50 text-rose-600`}>
+                          − {taka(cut)}
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              );
+            })}
+          </ul>
+
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-[#14493B]/50">
                 <tr>

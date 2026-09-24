@@ -1,0 +1,313 @@
+================================================================================
+CHA GHOR - SECURITY POSTURE
+Tea estate management system | Team Fallen_Beru | CSE-3412
+Last reviewed: 2026-08-30
+================================================================================
+
+HOW TO READ THIS DOCUMENT
+
+Everything under "VERIFIED" was checked against the source, and the method is
+stated so it can be re-checked. Everything under "NOT DONE" is an honest gap,
+not a roadmap item dressed up as future work.
+
+Nothing here has been penetration-tested or load-tested. The claims are about
+what the code does, not about how it behaves under attack.
+
+
+================================================================================
+1. CONFIDENTIALITY - keeping data from people who should not see it
+================================================================================
+
+VERIFIED
+
+  Password storage
+    BCrypt via Spring Security's PasswordEncoder. Plain passwords are never
+    stored, never logged, and never returned by any endpoint.
+    DataInitializer used to print the seeded admin password to stdout on every
+    boot; it no longer does.
+
+  Worker PIN storage
+    BCrypt, same as passwords. Shown to the admin exactly once at approval and
+    unrecoverable afterwards. A separate unsalted SHA-256 column exists ONLY so
+    a UNIQUE index can stop two workers being issued the same PIN - it is never
+    used to authenticate.
+
+  Authorisation coverage
+    163 endpoints. 135 carry an explicit @PreAuthorize (the raw annotation count
+    is 143, because some sit at class level); the other 28 are either
+    intentionally public (login, PIN login, signup, driver tracking by token) or
+    /me/* routes that resolve the caller from the JWT and cannot take an id from
+    the request.
+
+  No horizontal privilege escalation (IDOR)
+    /workers/{id}/** is ADMIN or SUPERVISOR only. The worker console reads
+    exclusively through /me/worker/*, which resolves the worker from the token
+    subject. A worker cannot request another worker's wages by changing an id.
+
+  Role escalation blocked at signup
+    SignupRequest.role is a String, not the Role enum, and only "worker" and
+    "supervisor" map to anything. There is no code path from the public signup
+    endpoint to Role.admin. approval_status is not a field on the request and
+    is never read from one.
+
+  No username enumeration on login
+    A wrong password and a non-existent user produce the same response. Account
+    status ("pending", "rejected") is disclosed ONLY after the supplied password
+    has been verified with passwordEncoder.matches - because Spring runs the
+    enabled-check before the password check, so relying on DisabledException
+    alone would have leaked status to anyone typing a random password.
+
+  JWT signing key
+    HS384. The application REFUSES TO START on the development key committed to
+    application.yaml unless a dev/local/test profile is active, and enforces a
+    48-byte minimum. Verified across five profile/secret combinations.
+
+  Secrets not in git
+    ai_service/.env (which has held a live Gemini key) is gitignored. Zero .env
+    files are tracked. *.pem and *.keystore are ignored. backups/ is ignored -
+    a dump contains every wage and phone number on the estate.
+
+  Chatbot database access
+    Runs as chabot_readonly against five curated views, behind guard_sql in
+    db.py. It cannot reach base tables.
+
+  Response hardening
+    X-Frame-Options DENY, Referrer-Policy strict-origin-when-cross-origin, HSTS
+    with includeSubDomains, nosniff by default. Stack traces are never returned
+    to clients (server.error.include-stacktrace: never).
+
+  CORS
+    Pattern-based allowlist restricted to localhost and the three private IPv4
+    ranges, http and https. Verified that evil.example.com is rejected.
+    Previously the REST layer used setAllowedOrigins (no wildcard support) while
+    the WebSocket layer used setAllowedOriginPatterns - so a LAN wildcard worked
+    for sockets and silently failed for every REST call. Both now use patterns.
+
+NOT DONE
+
+  * No encryption at rest. The Postgres volume is plaintext on disk.
+  * TLS is available but OFF by default (see section 4). Until it is enabled,
+    tokens, passwords and PINs cross the network in clear text.
+  * JWT is stored in localStorage and CSP is deliberately disabled (it broke
+    Leaflet map tiles). Any XSS therefore yields a 24-hour session. The real fix
+    is short-lived tokens plus a refresh token in an httpOnly cookie.
+  * No field-level encryption on phone numbers or national IDs.
+  * Email addresses and phone numbers are never verified - the fields are
+    collected but no confirmation is ever sent.
+
+
+================================================================================
+2. INTEGRITY - keeping data correct, and provable
+================================================================================
+
+VERIFIED
+
+  No SQL injection surface
+    All 18 @Query annotations (13 of them native SQL) are static string
+    literals. No concatenation, no String.format, no SpEL interpolation. No
+    EntityManager, JdbcTemplate or raw Statement anywhere in the codebase.
+    Everything else uses Spring Data derived queries. JPA parameterises all of
+    it.
+
+  Money invariants enforced by the DATABASE, not just by code
+    finance_ledger.amount >= 0                (chk_finance_amount_nonneg)
+    daily_settlement: to_loan + to_advance + to_overdraw + payable = earned
+    wage_overdraw:    recovered <= amount, both >= 0
+    loan_repayment_entry.amount > 0
+    A service bug cannot write an inconsistent row; the insert is rejected.
+
+  Idempotent money postings
+    Every finance posting is guarded by an existence check on
+    (source_type, source_id), so a retry cannot double-post.
+    daily_settlement carries a PARTIAL unique index on (worker_id, work_date)
+    WHERE reversed_at IS NULL - one live settlement per worker per day, so a
+    repeated or concurrent job run cannot deduct twice, while corrected days
+    keep their history.
+
+  Corrections are reversals, never deletions
+    A settled day that is later corrected is stamped reversed and compensated
+    with a new ledger row; the original stays. loan_repayment_entry is stamped
+    rather than deleted (a negative repayment is forbidden by CHECK). If a taka
+    moved, there is a row for it.
+
+  Append-only audit trail
+    audit_log has no POST, PUT or DELETE controller. Account approval, rejection
+    and every payroll state transition are recorded with the acting user.
+
+  Input validation
+    Bean Validation on every DTO. Passwords require 8-72 characters with an
+    uppercase letter, a lowercase letter, a digit and a symbol - enforced
+    identically at all THREE account-creation paths (signup, admin register,
+    worker login creation). Verified that "12345678", "password", "Password1"
+    and "ALLCAPS1!" are all rejected.
+    The 72-character maximum is deliberate: BCrypt silently ignores bytes past
+    72, so without a cap two different passwords would both authenticate.
+
+  Schema migrations
+    Flyway, append-only, V1-V38. Hibernate validates the schema at startup, so a
+    type mismatch stops the application rather than corrupting data silently.
+
+  Arithmetic verified by simulation
+    3000 randomised estates with loans, advances, thin days and interleaved
+    withdrawals: zero failures across nine invariants, including
+    loan.repaid == SUM(live to_loan) and cash_out == advances + salary.
+    3000 randomised corrections (up, down, with and without prior withdrawal):
+    zero failures, including idempotent re-correction.
+
+NOT DONE
+
+  * audit_log is append-only by convention, not by permission. The application
+    never writes to it destructively, but the app's database user holds full
+    rights on the table - so anyone with the connection string can rewrite it.
+    A dedicated append-only role would close this.
+  * No signed or hash-chained audit entries, so tampering is not detectable.
+  * The leaf health / disease detector has never been measured. The leaf grade
+    model WAS measured: 56.7% against a 51% always-guess baseline, p = 0.15, on
+    97 labelled photographs - indistinguishable from guessing, which is why its
+    suggestion is displayed and never pre-filled.
+
+
+================================================================================
+3. AVAILABILITY - staying up, and staying responsive
+================================================================================
+
+VERIFIED
+
+  Brute-force defence on credentials
+    5 attempts per 60 seconds per client on /auth/login, /auth/login/pin and
+    /auth/signup, in SEPARATE buckets per path - so flooding signup cannot lock
+    someone out of logging in. A successful login clears the counter.
+    X-Forwarded-For is honoured ONLY from proxies listed in
+    app.security.trusted-proxies (empty by default). Previously it was trusted
+    unconditionally: simulated, 100 of 100 attempts got through with a random
+    header per request; now 5.
+
+  General API rate limiting                                          [NEW]
+    300 requests per minute across all /api/v1/** for every other endpoint,
+    keyed on the JWT subject where present so one busy admin cannot lock out an
+    office sharing a NAT address. Far above anything the UI does - this is a
+    runaway-loop and scraping guard, not a user-facing throttle.
+
+  Connection pool and query ceiling                                  [NEW]
+    Previously unconfigured, meaning Spring's 10 connections and NO query
+    timeout: one full-table scan could hold a connection indefinitely while the
+    eleventh request queued without bound.
+    Now 20 connections, 10s connection-timeout, and statement_timeout=15000
+    enforced by Postgres itself so the connection is genuinely released.
+
+  Pagination caps
+    All list endpoints cap page size. FinanceService allowed 10,000 rows per
+    request - now 200, matching every other endpoint.
+
+  Upload limits
+    10MB per file and per request. Case attachments are magic-byte checked and
+    stored under UUID names.
+
+  Database resilience
+    restart: unless-stopped, a pg_isready healthcheck every 10s, and a named
+    volume so data survives container restarts.
+
+  Graceful degradation
+    Every AI call degrades: if ai_service is down the page still works and says
+    why. A model failure can never fail a save that already committed. The same
+    pattern applies to WebSocket pushes and SMS - all best-effort, all after the
+    commit.
+
+  Offline tolerance
+    Supervisors record attendance and weigh-ins with no signal; writes queue in
+    an outbox and replay. Non-idempotent writes carry a client_uuid guarded
+    server-side.
+
+  Self-healing settlement
+    Daily settlement runs at 00:30 AND on application startup, so an outage
+    costs delay rather than data. "Workers behind" is surfaced on the Payroll
+    page, and the office is notified when a catch-up runs.
+
+  Backups                                                            [NEW]
+    scripts/backup-db.sh - compressed, timestamped pg_dump with a 14-file
+    rotation. Writes to a .partial name and renames only on success, because a
+    truncated backup carrying the real filename is worse than none: it looks
+    valid until the day it is needed. Refuses to report success on a dump under
+    1KB.
+
+NOT DONE
+
+  * Single Postgres node, no replica. A restart is downtime; there is no
+    failover. "Always available" is not achievable on one container.
+  * Backups are manual until a cron entry is added, and NO RESTORE HAS EVER
+    BEEN TESTED. An untested backup is a hypothesis, not a safeguard.
+  * No load testing has been performed. The pool sizing above is a reasonable
+    default, not a measured one.
+  * No monitoring or alerting. Failures are visible in logs and, for settlement,
+    on the Payroll card - nobody is paged.
+  * No WAF, no DDoS protection, no fail2ban-style IP banning for sustained
+    abuse.
+
+
+================================================================================
+4. TLS / TRANSPORT - available, opt-in
+================================================================================
+
+  HTTPS is implemented but OFF BY DEFAULT, because enabling it unconditionally
+  would break plain-HTTP phone testing, and a self-signed certificate makes a
+  mobile browser show a full-page warning before anything loads.
+
+  To enable:
+    ./scripts/gen-dev-cert.sh
+    APP_SSL_ENABLED=true ./mvnw spring-boot:run
+
+  The script issues one certificate covering localhost, 127.0.0.1 and the
+  detected LAN IP - in the Subject Alternative Name, not just the CN, because
+  browsers ignore CN entirely and a localhost-only certificate fails hard on a
+  LAN address. It also exports PEM copies that vite.config.js picks up
+  automatically, so the frontend and backend move to TLS together. Half-enabling
+  it would leave the page calling an http API that is no longer listening.
+
+  Visit https://<ip>:8080 once per device and accept the warning BEFORE relying
+  on the live boards: wss:// uses the same certificate but the browser will not
+  prompt for it, so the sockets fail silently otherwise.
+
+  For production, use a CA-issued certificate via APP_SSL_KEYSTORE.
+
+
+================================================================================
+5. NETWORK EXPOSURE
+================================================================================
+
+  Postgres is bound to 127.0.0.1:5433.                               [FIXED]
+
+  It was previously "5433:5432", which Docker expands to 0.0.0.0 - the database
+  listening on every interface. On a shared wifi anyone could connect with the
+  credentials in docker-compose.yml (which are in git) and read or rewrite
+  everything, bypassing authentication, authorisation, the audit trail and the
+  money invariants entirely. All of those sit ABOVE that port.
+
+  Phone testing does not need it open: the phone talks to the backend on 8080,
+  and only the backend talks to Postgres.
+
+  The database password now reads ${DB_PASSWORD:-chaghor_dev_pw}, so a real
+  deployment is not using a password published in this repository.
+
+
+================================================================================
+6. HONEST SUMMARY
+================================================================================
+
+  Integrity is the strongest area. Money invariants live in the database, money
+  corrections are reversals rather than deletions, and the arithmetic has been
+  checked by simulation rather than assumed.
+
+  Confidentiality is sound in the application logic - authorisation coverage,
+  no IDOR, no injection surface, no role escalation - and was weak at the
+  boundaries. The database port and the CORS mismatch are fixed; TLS is
+  available but must be switched on.
+
+  Availability now has the usual protections in place, but NONE of it has been
+  measured. There is no load test, no restore drill, and no monitoring. Treat
+  every availability claim here as "the protection exists", not "it has been
+  shown to work".
+
+  The three things most worth doing next, in order:
+    1. Test a restore. A backup nobody has restored is not a backup.
+    2. Turn TLS on and keep it on.
+    3. Move the JWT out of localStorage, or enable a CSP that tolerates Leaflet.

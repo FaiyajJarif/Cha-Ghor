@@ -45,7 +45,7 @@ const WS_URL =
 // device". The tooltip says so rather than implying a synced inbox.
 
 const CARD_STROKE = "ring-1 ring-[#13483B59]";
-const CARD = `rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`;
+const CARD = `min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE}`;
 const PAGE_SIZE = 6;
 const SEEN_KEY = "chaghor.broadcast.lastOpened";
 
@@ -106,7 +106,7 @@ function Kpi({ icon: Icon, label, value, pill, pillTone, sub }) {
         </span>
       </div>
       <div className="mt-2 flex items-end justify-between gap-2">
-        <p className="text-3xl font-extrabold text-cg-ink">{value}</p>
+        <p className="truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl">{value}</p>
         {pill ? (
           <span
             className={`mb-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${
@@ -343,7 +343,7 @@ export default function SupervisorBroadcast() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-3xl font-extrabold text-cg-ink">Broadcast</h1>
+            <h1 className="text-2xl font-extrabold text-cg-ink sm:text-3xl">Broadcast</h1>
             {/* Honest connection state. "Live" is a claim the user can check,
                 so it reflects the actual socket rather than being decoration. */}
             <span
@@ -382,7 +382,7 @@ export default function SupervisorBroadcast() {
       )}
 
       {/* KPIs */}
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-4">
         <Kpi
           icon={LuMessageSquare}
           label="Total messages"
@@ -433,7 +433,7 @@ export default function SupervisorBroadcast() {
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-rose-100 text-rose-600">
             <LuBellRing size={20} />
           </span>
-          <div className="min-w-[14rem] flex-1">
+          <div className="min-w-0 flex-1 sm:min-w-[14rem]">
             <p className="text-sm font-extrabold text-rose-700">
               Emergency alert: {banner.title}
             </p>
@@ -473,7 +473,7 @@ export default function SupervisorBroadcast() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 border-b border-[#13483B]/10 px-5 py-3">
-            <label className="relative flex min-w-[11rem] flex-1 items-center">
+            <label className="relative flex min-w-0 flex-1 items-center sm:min-w-[11rem]">
               <LuSearch
                 size={15}
                 className="pointer-events-none absolute left-3 text-cg-ink/40"

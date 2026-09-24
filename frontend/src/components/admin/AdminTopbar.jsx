@@ -1,4 +1,4 @@
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ADMIN_NAV } from "../../lib/adminNav";
 import { useAuth } from "../../context/AuthContext";
 import Avatar from "./Avatar";
@@ -24,15 +24,27 @@ export default function AdminTopbar() {
   });
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-cg-dark/10 bg-[#c0f28b] px-6 py-3">
-      <div>
-        <h1 className="text-lg font-extrabold text-cg-ink">{current.label}</h1>
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b border-cg-dark/10 bg-[#c0f28b] px-4 py-3 sm:px-6">
+      {/* min-w-0 so a long module name truncates rather than shoving the bell
+          and avatar off the right edge. */}
+      <div className="min-w-0">
+        <h1 className="truncate text-base font-extrabold text-cg-ink sm:text-lg">
+          {current.label}
+        </h1>
         <p className="hidden text-sm text-cg-ink/60 sm:block">{today}</p>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         <NotificationBell />
-        <div className="flex items-center gap-3 rounded-full bg-white/50 py-1 pl-1 pr-3">
+        {/* THE PROFILE WAS A PLAIN DIV. It looked like a control on every
+            screen and responded to nothing -- there was no onClick, no href,
+            no keyboard focus. It now opens Settings, which is where the
+            profile, password and notification preferences already live. */}
+        <Link
+          to="/admin/settings"
+          aria-label="Open your profile settings"
+          className="flex items-center gap-3 rounded-full bg-white/50 py-1 pl-1 pr-1 transition hover:bg-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-cg-dark sm:pr-3"
+        >
           <Avatar
             name={user?.displayName || user?.username}
             src={user?.avatarUrl}
@@ -46,7 +58,7 @@ export default function AdminTopbar() {
               {user?.role || "admin"}
             </p>
           </div>
-        </div>
+        </Link>
       </div>
     </header>
   );

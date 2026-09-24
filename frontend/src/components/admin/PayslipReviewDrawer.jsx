@@ -140,13 +140,26 @@ export default function PayslipReviewDrawer({ row, onClose, onAdvance, busy }) {
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
+      {/* ========== THE SAME CENTRED CARD AS ADD WORKER / ADD ITEM ==========
+          This was an edge-to-edge bottom sheet. It is reached from the Review
+          button on the mobile payslip card, so it is the dialog a phone user
+          opens most — and it was the last one still glued to a screen edge
+          with no gutter. Backdrop is now the positioning parent.
+
+          The grab handle went with it: it said "this slides", which a centred
+          card does not. The header X is the dismiss control. */}
+      <div
+        className="fixed inset-0 z-[1200] grid place-items-center bg-black/40 p-4"
+        onClick={onClose}
+      >
       <aside
-        className="fixed inset-y-0 right-0 z-[1210] flex w-full max-w-2xl flex-col bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
         role="dialog"
         aria-label={`Payslip review for ${row.workerName || "worker"}`}
+        /* The backdrop closes; a click inside must not bubble up to it. */
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 bg-cg-dark px-6 py-5 text-white">
+        <div className="flex items-start justify-between gap-4 bg-cg-dark px-4 py-4 text-white sm:px-6 sm:py-5">
           <div>
             <h3 className="text-lg font-extrabold">{row.workerName || `Worker #${row.workerId}`}</h3>
             <p className="mt-0.5 text-sm text-white/70">
@@ -319,6 +332,7 @@ export default function PayslipReviewDrawer({ row, onClose, onAdvance, busy }) {
                         <th className="px-3 py-2 text-right font-bold">Earned</th>
                         <th className="px-3 py-2 text-right font-bold">Loan</th>
                         <th className="px-3 py-2 text-right font-bold">Advance</th>
+                        <th className="px-3 py-2 text-right font-bold">Overpaid</th>
                         <th className="px-3 py-2 text-right font-bold">Worker gets</th>
                       </tr>
                     </thead>
@@ -367,6 +381,11 @@ export default function PayslipReviewDrawer({ row, onClose, onAdvance, busy }) {
                             <td className="px-3 py-2 text-right tabular-nums text-cg-ink/70">
                               {Number(d.toAdvance) > 0 ? "− " + taka(d.toAdvance) : "—"}
                             </td>
+                            {/* Repaying a day that was corrected downward after
+                                it had already been settled and drawn. */}
+                            <td className="px-3 py-2 text-right tabular-nums text-cg-ink/70">
+                              {Number(d.toOverdraw) > 0 ? "− " + taka(d.toOverdraw) : "—"}
+                            </td>
                             <td className="px-3 py-2 text-right font-bold tabular-nums text-cg-ink">
                               {taka(d.payable)}
                             </td>
@@ -384,6 +403,9 @@ export default function PayslipReviewDrawer({ row, onClose, onAdvance, busy }) {
                         </td>
                         <td className="px-3 py-2 text-right font-extrabold tabular-nums">
                           − {taka(daily.totalToAdvance)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-extrabold tabular-nums">
+                          − {taka(daily.totalToOverdraw)}
                         </td>
                         <td className="px-3 py-2 text-right font-extrabold tabular-nums">
                           {taka(daily.totalPayable)}
@@ -484,6 +506,7 @@ export default function PayslipReviewDrawer({ row, onClose, onAdvance, busy }) {
           )}
         </div>
       </aside>
+      </div>
     </>,
     document.body,
   );

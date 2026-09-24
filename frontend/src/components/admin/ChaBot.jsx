@@ -69,14 +69,17 @@ export default function ChaBot({ suggestions = [] }) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Open Cha Bot"
-        className="fixed bottom-5 right-5 z-[80] grid h-14 w-14 place-items-center rounded-full bg-cg-dark text-white shadow-lg transition hover:bg-cg-darker"
+        // bottom-24 on a phone so the launcher clears the fixed bottom tab bar
+        // (AdminBottomNav), which is md:hidden -- back to bottom-5 from md up
+        // where the bar does not exist.
+        className="fixed bottom-24 right-5 z-[80] grid h-14 w-14 place-items-center rounded-full bg-cg-dark text-white shadow-lg transition hover:bg-cg-darker md:bottom-5"
       >
         {open ? <LuX size={22} /> : <LuBot size={24} />}
       </button>
 
       {open &&
         createPortal(
-          <div className="fixed bottom-24 right-5 z-[80] flex h-[70vh] max-h-[560px] w-[92vw] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-cg-green/15">
+          <div className="fixed bottom-44 right-5 z-[80] flex h-[60vh] max-h-[560px] w-[92vw] max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-cg-green/15 md:bottom-24 md:h-[70vh]">
             <div className="flex items-center gap-2 bg-cg-dark px-4 py-3 text-white">
               <LuBot size={20} />
               <div className="leading-tight">

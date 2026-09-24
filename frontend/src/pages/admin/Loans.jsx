@@ -107,16 +107,24 @@ function StatCard({ icon: Icon, label, value, sub, tone = "default" }) {
         : "bg-cg-lime text-cg-green";
   const valColor = tone === "red" ? "text-red-600" : "text-cg-ink";
   return (
-    <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, and
+    // an outstanding-balance figure has no break opportunity, so without this
+    // the KPI grid grew wider than the phone and dragged the page with it.
+    <div className="min-w-0 rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
         <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${chip}`}>
           <Icon size={18} />
         </span>
       </div>
-      <p className={`mt-2 text-2xl font-extrabold ${valColor}`}>{value}</p>
+      <p
+        className={`mt-2 truncate text-xl font-extrabold tabular-nums sm:text-2xl ${valColor}`}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </p>
       {sub ? <p className="mt-1 text-xs text-cg-ink/50">{sub}</p> : null}
     </div>
   );

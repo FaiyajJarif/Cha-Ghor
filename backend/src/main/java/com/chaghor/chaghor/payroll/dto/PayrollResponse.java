@@ -22,6 +22,7 @@ public record PayrollResponse(
         BigDecimal grossAmount,
         BigDecimal loanDeduction,
         BigDecimal advanceRecovery,
+        BigDecimal overdrawRecovery,
         BigDecimal otherDeduction,
         BigDecimal netPayable,
         String status,

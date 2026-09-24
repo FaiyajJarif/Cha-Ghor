@@ -16,6 +16,28 @@ export function apiError(err, fallback) {
   const code = err?.response?.status;
   const body = err?.response?.data;
 
+  // ============================================================
+  // NO RESPONSE AT ALL IS NOT A BAD PASSWORD.
+  // ============================================================
+  //
+  // This cost real debugging time. When the request never reaches the backend
+  // — CORS rejected the origin, the phone is on a different network, the
+  // backend is not running — axios throws with `err.response` UNDEFINED. Every
+  // branch below reads err.response, so all of them missed, and the function
+  // returned the caller's fallback.
+  //
+  // On the login page that fallback is "Invalid username or password." So a
+  // networking problem was reported to the user as wrong credentials, and they
+  // retyped a password that was correct all along.
+  //
+  // A request that got no answer is a connection problem and must say so.
+  if (!err?.response) {
+    return (
+      "Could not reach the server. Check that the backend is running and that " +
+      "this device is on the same network as it."
+    );
+  }
+
   // Rate limiting (Phase 1 login throttle; safe to handle everywhere).
   if (code === 429) {
     const secs = body?.retryAfterSeconds;

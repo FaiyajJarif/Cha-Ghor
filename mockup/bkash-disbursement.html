@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cha Ghor → bKash bulk disbursement (simulation)</title>
+<style>
+  /* ==========================================================================
+     A SIMULATION. NOTHING HERE TOUCHES bKash OR ANY REAL MONEY.
+     ==========================================================================
+     Built to show the shape of the real corporate-disbursement flow that ~800
+     RMG factories use: pre-funded account, spreadsheet of numbers and amounts,
+     one run, workers notified. Every number below is invented.
+     Single file, vanilla JS, no build step, no backend — open it and present.
+  ========================================================================== */
+  :root{
+    --cg:#14493B; --cg-lime:#C0F28B; --cg-bg:#E1FFC6;
+    --bk:#E2136E;            /* bKash-ish magenta, for the simulated portal   */
+    --ink:#16281c; --muted:#5b6b60; --line:#dfe7dc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+       background:#f4f7f2;color:var(--ink)}
+  .wrap{max-width:1120px;margin:0 auto;padding:20px 16px 64px}
+
+  .disclaimer{background:#fff4e5;border:1px solid #f0c98a;color:#7a4a00;
+              border-radius:12px;padding:12px 16px;font-size:13px;margin-bottom:18px}
+  .disclaimer b{color:#5a3600}
+
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 20px}
+
+  /* stepper */
+  .steps{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  .step{flex:1;min-width:150px;background:#fff;border:1px solid var(--line);
+        border-radius:12px;padding:10px 12px;opacity:.5;transition:.25s}
+  .step.on{opacity:1;border-color:var(--cg);box-shadow:0 2px 10px rgba(20,73,59,.12)}
+  .step.done{opacity:1;border-color:#8fd05a;background:#f6fff0}
+  .step .n{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted);
+           text-transform:uppercase}
+  .step .t{font-weight:700;font-size:14px;margin-top:2px}
+
+  .panel{background:#fff;border:1px solid var(--line);border-radius:16px;
+         overflow:hidden;margin-bottom:16px}
+  .panel > header{background:var(--cg-lime);padding:12px 16px;font-weight:800;
+                  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .panel > header .tag{margin-left:auto;font-size:12px;font-weight:700;color:var(--cg)}
+  .body{padding:16px}
+
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{background:#eefbe0;text-align:left;padding:8px 10px;font-size:11px;
+     text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  td{padding:9px 10px;border-top:1px solid var(--line)}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .scroll{overflow-x:auto}
+
+  button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:10px 16px;
+         cursor:pointer;transition:.15s}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .primary{background:var(--cg);color:#fff}
+  .ghost{background:#eef4ea;color:var(--cg)}
+  .bkash{background:var(--bk);color:#fff}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800}
+  .p-wait{background:#fff0d6;color:#8a5a00}
+  .p-ok{background:#dcf5e3;color:#1c6b38}
+  .p-sent{background:#e7e3ff;color:#4632a8}
+
+  /* phone */
+  .phone{width:290px;border:9px solid #1b1b1b;border-radius:32px;background:#fff;
+         overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+  .phone .bar{background:var(--cg-lime);padding:10px 14px;font-weight:800;font-size:14px}
+  .phone .scr{padding:14px}
+  .bignum{font-size:30px;font-weight:900;color:var(--cg);letter-spacing:-.5px}
+
+  /* bkash portal */
+  .bk-portal{border:1px solid #f4b8d3;border-radius:16px;overflow:hidden}
+  .bk-portal > header{background:var(--bk);color:#fff;padding:12px 16px;font-weight:800;
+                      display:flex;align-items:center;gap:10px}
+  .bk-portal > header .lo{background:#fff;color:var(--bk);border-radius:8px;
+                          padding:2px 8px;font-weight:900;letter-spacing:-.5px}
+  .bk-portal .body{background:#fff6fa}
+  .drop{border:2px dashed #f0a6c8;border-radius:12px;padding:22px;text-align:center;
+        color:#a3376a;background:#fff}
+  .drop.has{border-style:solid;background:#fff0f6}
+
+  .log{background:#0f1b16;color:#cdeccf;border-radius:12px;padding:12px;
+       font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:230px;overflow:auto}
+  .log .t{color:#7fd6a2}
+  .log .w{color:#ffd479}
+
+  .grid2{display:grid;gap:16px;grid-template-columns:1fr}
+  @media(min-width:860px){.grid2{grid-template-columns:300px 1fr}}
+  .muted{color:var(--muted);font-size:13px}
+  .hidden{display:none}
+  code{background:#eef4ea;padding:1px 5px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="disclaimer">
+    <b>Simulation only.</b> This page is a teaching mockup for the Cha Ghor project.
+    It is <b>not</b> connected to bKash, sends no SMS, and moves no money. The
+    “bKash” panel imitates the shape of a corporate disbursement portal so the
+    workflow can be explained; it is not bKash software and every figure is invented.
+  </div>
+
+  <h1>Payroll → worker request → approval → bKash bulk disbursement</h1>
+  <p class="sub">
+    The route ~800 RMG factories actually use: the employer pre-funds a corporate
+    disbursement account, uploads a file of wallet numbers and amounts, and bKash
+    credits every wallet in one run.
+  </p>
+
+  <div class="steps">
+    <div class="step" id="s1"><div class="n">Step 1</div><div class="t">Payroll generated</div></div>
+    <div class="step" id="s2"><div class="n">Step 2</div><div class="t">Worker taps বেতন তুলুন</div></div>
+    <div class="step" id="s3"><div class="n">Step 3</div><div class="t">Admin approves</div></div>
+    <div class="step" id="s4"><div class="n">Step 4</div><div class="t">Disbursement file</div></div>
+    <div class="step" id="s5"><div class="n">Step 5</div><div class="t">bKash run + SMS</div></div>
+  </div>
+
+  <!-- 1. payroll ---------------------------------------------------------- -->
+  <div class="panel">
+    <header>1 · Payroll generated — this cycle
+      <span class="tag" id="payTag">draft</span></header>
+    <div class="body">
+      <p class="muted" style="margin-top:0">
+        Net payable after loan, advance and overdraw recovery. These are the
+        figures the estate already holds; nothing has been transferred.
+      </p>
+      <div class="scroll">
+        <table id="payTable">
+          <thead><tr>
+            <th>Worker</th><th>ID</th><th>Field</th><th>bKash number</th>
+            <th class="num">Net payable</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row"><button class="primary" id="btnOpenWorker">Continue →</button></div>
+    </div>
+  </div>
+
+  <!-- 2. worker ----------------------------------------------------------- -->
+  <div class="panel hidden" id="pWorker">
+    <header>2 · Worker console — বেতন ও ঋণ</header>
+    <div class="body grid2">
+      <div class="phone">
+        <div class="bar">চা ঘর</div>
+        <div class="scr">
+          <div class="muted" style="font-size:12px">আপনার উপলব্ধ ব্যালেন্স</div>
+          <div class="bignum" id="wBal">৳0</div>
+          <div class="muted" style="font-size:12px;margin-top:2px" id="wName"></div>
+          <button class="primary" style="width:100%;margin-top:14px" id="btnWithdraw">
+            বিকাশের মাধ্যমে উত্তোলন
+          </button>
+          <p class="muted" style="font-size:11px;margin-top:10px">
+            অফিস অনুমোদন করলে বিকাশে টাকা যাবে।
+          </p>
+        </div>
+      </div>
+      <div>
+        <p class="muted" style="margin-top:0">
+          Each tap files a <code>pending</code> withdrawal request. No money moves —
+          the request only enters the office queue. Tap for a few workers, then
+          continue.
+        </p>
+        <div class="scroll">
+          <table><thead><tr><th>Requested by</th><th class="num">Amount</th><th>Status</th></tr></thead>
+          <tbody id="reqTable"><tr><td colspan="3" class="muted">No requests yet.</td></tr></tbody></table>
+        </div>
+        <div class="row">
+          <button class="ghost" id="btnNextWorker">Next worker</button>
+          <button class="primary" id="btnToAdmin" disabled>Go to admin queue →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. admin ------------------------------------------------------------ -->
+  <div class="panel hidden" id="pAdmin">
+    <header>3 · Admin — withdrawal queue
+      <span class="tag" id="admTag">0 pending</span></header>
+    <div class="body">
+      <p class="muted" style="margin-top:0">
+        The office decides. Approving does not send money on its own — it marks
+        the row for inclusion in the next disbursement file.
+      </p>
+      <div class="scroll">
+        <table><thead><tr>
+          <th style="width:34px"><input type="checkbox" id="chkAll"></th>
+          <th>Worker</th><th>bKash number</th><th class="num">Amount</th><th>Status</th>
+        </tr></thead><tbody id="admTable"></tbody></table>
+      </div>
+      <div class="row">
+        <button class="primary" id="btnApprove">Approve selected</button>
+        <span class="muted" id="admNote"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. file ------------------------------------------------------------- -->
+  <div class="panel hidden" id="pFile">
+    <header>4 · Disbursement file
+      <span class="tag" id="fileTag"></span></header>
+    <div class="body">
+      <p class="muted" style="margin-top:0">
+        This is the artefact the employer hands to bKash: one row per wallet.
+        The file below is real — the download works and opens in Excel.
+      </p>
+      <div class="log" id="csvPreview"></div>
+      <div class="row">
+        <button class="ghost" id="btnDownload">⬇ Download CSV</button>
+        <button class="primary" id="btnToBkash">Upload to bKash →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. bkash ------------------------------------------------------------ -->
+  <div class="panel hidden" id="pBkash" style="border:0;padding:0">
+    <div class="bk-portal">
+      <header><span class="lo">bKash</span> Corporate Disbursement · <span style="opacity:.85">SIMULATED</span></header>
+      <div class="body">
+        <div class="row" style="margin-top:0;justify-content:space-between">
+          <div>
+            <div class="muted" style="font-size:12px">Disbursement account balance</div>
+            <div class="bignum" style="color:var(--bk)" id="bkBal">৳ 2,00,000</div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted" style="font-size:12px">Batch</div>
+            <div style="font-weight:800" id="bkBatch">—</div>
+          </div>
+        </div>
+
+        <div class="drop" id="drop" style="margin-top:14px">
+          No file uploaded yet
+        </div>
+
+        <div class="scroll hidden" id="bkTableWrap" style="margin-top:14px">
+          <table><thead><tr>
+            <th>Wallet</th><th>Name</th><th class="num">Amount</th><th>Status</th><th>TrxID</th>
+          </tr></thead><tbody id="bkTable"></tbody></table>
+        </div>
+
+        <div class="row">
+          <button class="bkash" id="btnDisburse" disabled>Disburse to all wallets</button>
+          <span class="muted" id="bkNote"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <header>SMS delivery log <span class="tag" id="smsTag">0 sent</span></header>
+      <div class="body">
+        <p class="muted" style="margin-top:0">
+          In the real system this is the same <code>SmsSender</code> the rest of
+          Cha Ghor uses, so every message lands in <code>sms_log</code>. Here it
+          is simulated.
+        </p>
+        <div class="log" id="smsLog">waiting…</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Invented data. Names and numbers are fictional; the wallet numbers are in the
+// 018 range but are not real subscribers.
+// ---------------------------------------------------------------------------
+const WORKERS = [
+  { id:"CG418", name:"Zawad Hossain",    zone:"Zone A-1", phone:"01812000418", net:6350 },
+  { id:"CG502", name:"Mukarram Hossen",  zone:"Zone B-3", phone:"01812000502", net:5980 },
+  { id:"CG112", name:"Rifat Islam",      zone:"Zone A-2", phone:"01812000112", net:7120 },
+  { id:"CG233", name:"Sajjad Hossain",   zone:"Zone C-1", phone:"01812000233", net:4890 },
+  { id:"CG307", name:"Rafiur Rahman",    zone:"Zone B-1", phone:"01812000307", net:6640 },
+];
+const bn = s => String(s).replace(/[0-9]/g, d => "০১২৩৪৫৬৭৮৯"[+d]);
+const tk = n => "৳ " + n.toLocaleString("en-IN");
+const $  = id => document.getElementById(id);
+
+let cursor = 0;             // which worker the phone is showing
+const requests = [];        // {…worker, status}
+let batchId = "";
+
+function step(n){
+  for (let i=1;i<=5;i++){
+    const el = $("s"+i);
+    el.classList.toggle("on",  i===n);
+    el.classList.toggle("done",i<n);
+  }
+}
+
+// ---- 1. payroll -----------------------------------------------------------
+$("payTable").querySelector("tbody").innerHTML = WORKERS.map(w => `
+  <tr><td><b>${w.name}</b></td><td>${w.id}</td><td>${w.zone}</td>
+      <td style="font-family:ui-monospace">${w.phone}</td>
+      <td class="num"><b>${tk(w.net)}</b></td></tr>`).join("");
+step(1);
+
+$("btnOpenWorker").onclick = () => {
+  $("pWorker").classList.remove("hidden");
+  step(2); showWorker(); $("pWorker").scrollIntoView({behavior:"smooth"});
+};
+
+// ---- 2. worker ------------------------------------------------------------
+function showWorker(){
+  const w = WORKERS[cursor];
+  $("wBal").textContent  = "৳" + bn(w.net.toLocaleString("en-IN"));
+  $("wName").textContent = w.name + " · " + w.id;
+  const already = requests.some(r => r.id === w.id);
+  $("btnWithdraw").disabled = already;
+  $("btnWithdraw").textContent = already ? "আবেদন করা হয়েছে" : "বিকাশের মাধ্যমে উত্তোলন";
+}
+$("btnWithdraw").onclick = () => {
+  const w = WORKERS[cursor];
+  if (requests.some(r => r.id === w.id)) return;
+  requests.push({ ...w, status:"pending" });
+  drawRequests(); showWorker();
+  $("btnToAdmin").disabled = requests.length === 0;
+};
+$("btnNextWorker").onclick = () => { cursor = (cursor+1) % WORKERS.length; showWorker(); };
+
+function drawRequests(){
+  $("reqTable").innerHTML = requests.length === 0
+    ? '<tr><td colspan="3" class="muted">No requests yet.</td></tr>'
+    : requests.map(r => `<tr><td>${r.name}</td><td class="num">${tk(r.net)}</td>
+        <td><span class="pill p-wait">pending</span></td></tr>`).join("");
+}
+
+$("btnToAdmin").onclick = () => {
+  $("pAdmin").classList.remove("hidden");
+  step(3); drawAdmin(); $("pAdmin").scrollIntoView({behavior:"smooth"});
+};
+
+// ---- 3. admin -------------------------------------------------------------
+function drawAdmin(){
+  $("admTag").textContent = requests.filter(r=>r.status==="pending").length + " pending";
+  $("admTable").innerHTML = requests.map((r,i) => `
+    <tr>
+      <td>${r.status==="pending" ? `<input type="checkbox" class="pick" data-i="${i}" checked>` : ""}</td>
+      <td><b>${r.name}</b><div class="muted" style="font-size:12px">${r.id} · ${r.zone}</div></td>
+      <td style="font-family:ui-monospace">${r.phone}</td>
+      <td class="num"><b>${tk(r.net)}</b></td>
+      <td>${r.status==="pending"
+            ? '<span class="pill p-wait">pending</span>'
+            : '<span class="pill p-ok">approved</span>'}</td>
+    </tr>`).join("");
+}
+$("chkAll").onchange = e =>
+  document.querySelectorAll(".pick").forEach(c => c.checked = e.target.checked);
+
+$("btnApprove").onclick = () => {
+  const picked = [...document.querySelectorAll(".pick:checked")].map(c => +c.dataset.i);
+  if (!picked.length) { $("admNote").textContent = "Nothing selected."; return; }
+  picked.forEach(i => requests[i].status = "approved");
+  drawAdmin();
+  const appr = requests.filter(r => r.status === "approved");
+  $("admNote").textContent = `${appr.length} approved · ${tk(appr.reduce((s,r)=>s+r.net,0))} total`;
+  buildFile(appr);
+  $("pFile").classList.remove("hidden");
+  step(4);
+  $("pFile").scrollIntoView({behavior:"smooth"});
+};
+
+// ---- 4. the file ----------------------------------------------------------
+let csv = "";
+function buildFile(rows){
+  batchId = "CG-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-01";
+  // The column shape a corporate disbursement file actually carries: who, how
+  // much, and a reference the employer can reconcile against later.
+  csv = "wallet_number,receiver_name,amount,reference\n" +
+        rows.map(r => `${r.phone},${r.name},${r.net},${batchId}-${r.id}`).join("\n");
+  $("csvPreview").textContent = csv;
+  $("fileTag").textContent = `${rows.length} rows · ${tk(rows.reduce((s,r)=>s+r.net,0))}`;
+}
+$("btnDownload").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv"}));
+  a.download = batchId + ".csv";
+  a.click(); URL.revokeObjectURL(a.href);
+};
+$("btnToBkash").onclick = () => {
+  $("pBkash").classList.remove("hidden");
+  step(5);
+  const rows = requests.filter(r => r.status === "approved");
+  $("drop").classList.add("has");
+  $("drop").innerHTML = `<b>${batchId}.csv</b> uploaded — ${rows.length} wallets, ` +
+                        `${tk(rows.reduce((s,r)=>s+r.net,0))}`;
+  $("bkBatch").textContent = batchId;
+  $("bkTableWrap").classList.remove("hidden");
+  $("bkTable").innerHTML = rows.map(r => `
+    <tr data-p="${r.phone}">
+      <td style="font-family:ui-monospace">${r.phone}</td>
+      <td>${r.name}</td><td class="num">${tk(r.net)}</td>
+      <td class="st"><span class="pill p-wait">queued</span></td>
+      <td class="tx muted">—</td>
+    </tr>`).join("");
+  $("btnDisburse").disabled = false;
+  $("pBkash").scrollIntoView({behavior:"smooth"});
+};
+
+// ---- 5. the run -----------------------------------------------------------
+const smsLines = [];
+function sms(line, cls){
+  smsLines.push(`<span class="${cls||""}">${line}</span>`);
+  $("smsLog").innerHTML = smsLines.join("\n");
+  $("smsLog").scrollTop = 1e6;
+  $("smsTag").textContent = smsLines.filter(l=>l.includes("→")).length + " sent";
+}
+$("btnDisburse").onclick = async () => {
+  $("btnDisburse").disabled = true;
+  const rows = requests.filter(r => r.status === "approved");
+  let bal = 200000;
+  smsLines.length = 0; sms("[batch " + batchId + "] starting…", "t");
+
+  for (const r of rows){
+    const tr = $("bkTable").querySelector(`tr[data-p="${r.phone}"]`);
+    tr.querySelector(".st").innerHTML = '<span class="pill p-wait">sending…</span>';
+    await new Promise(res => setTimeout(res, 550));
+
+    // A plausible-looking reference. Invented, not a real bKash TrxID format.
+    const trx = "SIM" + Math.random().toString(36).slice(2,10).toUpperCase();
+    tr.querySelector(".st").innerHTML = '<span class="pill p-sent">disbursed</span>';
+    tr.querySelector(".tx").textContent = trx;
+    tr.querySelector(".tx").classList.remove("muted");
+
+    bal -= r.net;
+    $("bkBal").textContent = "৳ " + bal.toLocaleString("en-IN");
+
+    sms(`→ ${r.phone}  চা ঘর: আপনার ৳${bn(r.net.toLocaleString("en-IN"))} টাকা ` +
+        `বিকাশে পাঠানো হয়েছে। TrxID ${trx}`);
+  }
+  sms(`[batch ${batchId}] complete — ${rows.length} wallets, ` +
+      `${tk(rows.reduce((s,r)=>s+r.net,0))} disbursed.`, "t");
+  sms(`note: simulated. no money moved, no SMS left this machine.`, "w");
+  $("bkNote").textContent = "Batch complete.";
+};
+</script>
+</body>
+</html>

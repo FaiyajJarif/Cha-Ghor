@@ -54,6 +54,11 @@ public record MyWages(
             // --- deductions -----------------------------------------------
             BigDecimal loanDeduction,      // owned by recompute(), from real loans
             BigDecimal advanceRecovery,    // advances already paid out
+            // Repaying a day that was corrected downward after the worker had
+            // already drawn it. Absent here, the worker's own payslip showed a
+            // net larger than what reached their bKash -- the exact mismatch
+            // this screen exists to prevent.
+            BigDecimal overdrawRecovery,
             BigDecimal otherDeduction,     // entered by the office
 
             // Floors at zero. A shortfall stays owed on the loan rather than

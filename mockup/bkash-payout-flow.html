@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cha Ghor → bKash payout (simulation)</title>
+<style>
+  /* =======================================================================
+     A SIMULATION. NOTHING HERE TOUCHES bKash OR ANY REAL MONEY.
+     =======================================================================
+     Three panels, left to right, telling one story:
+
+       1. workers request their wages          (many requests pile up)
+       2. admin IMPORTS them into a payout run (nothing moves yet)
+       3. admin SENDS the run                  (now the money moves)
+
+     The bar at the top is the point of the whole thing: it shows Cash on
+     Hand and the bKash wallet, and you can watch which step changes them.
+     Importing changes nothing. Sending is what moves money.
+
+     Single file, vanilla JS, no build, no backend. Open and present.
+     Every number is invented.
+     ======================================================================= */
+  :root{
+    --cg:#14493B; --cg-dark:#16281c; --cg-lime:#C0F28B; --cg-bg:#E1FFC6;
+    --bk:#E2136E;                      /* bKash magenta, simulated portal */
+    --ink:#16281c; --muted:#5b6b60; --line:#dfe7dc; --ok:#1a7f4f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:20px; background:#f4f8f0; color:var(--ink);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  h1{margin:0 0 2px; font-size:22px}
+  .sub{color:var(--muted); font-size:13px; margin:0 0 16px}
+
+  .sim{
+    background:#fff6fa; border:1px solid #f4b8d3; color:#8a1247;
+    border-radius:12px; padding:10px 14px; font-size:13px; margin-bottom:16px;
+  }
+
+  /* ---- the money bar: the thing to point at ---- */
+  .money{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:18px;
+  }
+  .money div{
+    background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px 14px;
+  }
+  .money .k{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted)}
+  .money .v{font-size:22px; font-weight:800; margin-top:2px; transition:color .3s}
+  .money .v.flash{color:var(--ok)}
+  .money .n{font-size:11px; color:var(--muted); margin-top:2px}
+
+  .cols{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start}
+  @media(max-width:900px){ .cols,.money{grid-template-columns:1fr} }
+
+  .card{background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden}
+  .card > h2{
+    margin:0; padding:11px 14px; font-size:14px; background:var(--cg-lime); color:var(--cg-dark);
+  }
+  .card.bk > h2{background:var(--bk); color:#fff; display:flex; gap:8px; align-items:center}
+  .card.bk .tag{
+    margin-left:auto; font-size:10px; font-weight:800; letter-spacing:.08em;
+  }
+  .body{padding:12px 14px}
+
+  .row{
+    display:flex; gap:10px; align-items:center;
+    padding:9px 0; border-bottom:1px solid #eef3ec; font-size:14px;
+  }
+  .row:last-child{border-bottom:0}
+  .row .name{flex:1; min-width:0}
+  .row .name b{display:block; font-weight:600}
+  .row .name span{font-size:11px; color:var(--muted)}
+  .row .amt{font-weight:700; white-space:nowrap}
+  .pill{
+    font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px;
+    background:#eef3ec; color:var(--muted); white-space:nowrap;
+  }
+  .pill.paid{background:#e6f6ed; color:var(--ok)}
+  .trx{font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--muted)}
+
+  button{
+    font:inherit; font-weight:700; border-radius:10px; padding:9px 14px;
+    border:1px solid var(--cg); background:var(--cg); color:#fff; cursor:pointer;
+    width:100%; margin-top:10px;
+  }
+  button.ghost{background:#fff; color:var(--cg)}
+  button.bk{background:var(--bk); border-color:var(--bk)}
+  button:disabled{opacity:.4; cursor:not-allowed}
+
+  .empty{color:var(--muted); font-size:13px; padding:18px 0; text-align:center}
+  .note{font-size:12px; color:var(--muted); margin-top:10px}
+  .warn{
+    background:#fff8e6; border:1px solid #f0d99a; color:#7a5b10;
+    border-radius:10px; padding:9px 11px; font-size:12px; margin-top:10px;
+  }
+  .log{
+    margin-top:18px; background:#fff; border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px; font-size:13px;
+  }
+  .log b{font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted)}
+  .log ol{margin:8px 0 0; padding-left:18px; color:var(--muted)}
+  .log li{margin:3px 0}
+
+  /* ---- the SMS panel: made to look like a phone, not a table row ---- */
+  .sms{padding:8px 0; border-bottom:1px solid #eef3ec}
+  .sms:last-of-type{border-bottom:0}
+  .sms .to{font-size:11px; color:var(--muted); margin-bottom:4px}
+  .sms .bubble{
+    display:inline-block; background:#eef3ec; border-radius:14px 14px 14px 4px;
+    padding:8px 12px; font-size:13px; max-width:520px;
+  }
+  code{background:#eef3ec; padding:1px 5px; border-radius:5px; font-size:11px}
+</style>
+</head>
+<body>
+
+<h1>Cha Ghor → bKash payout</h1>
+<p class="sub">Withdrawal requests → import into a payout run → send. Simulation.</p>
+
+<div class="sim">
+  <b>Simulation.</b> No bKash API is called and no real money moves. Transaction
+  IDs are prefixed <code>SIM</code>. The arithmetic is real: watch the three
+  figures above change — and notice which step changes them.
+</div>
+
+<!-- =================== THE MONEY BAR =================== -->
+<div class="money">
+  <div>
+    <div class="k">Cash on hand</div>
+    <div class="v" id="mCash">৳0</div>
+    <div class="n">office cash + bKash wallet</div>
+  </div>
+  <div>
+    <div class="k">bKash wallet</div>
+    <div class="v" id="mWallet">৳0</div>
+    <div class="n">the estate's own money, in a second pocket</div>
+  </div>
+  <div>
+    <div class="k">Owed to workers</div>
+    <div class="v" id="mOwed">৳0</div>
+    <div class="n">requested and not yet paid</div>
+  </div>
+</div>
+
+<div class="cols">
+
+  <!-- =================== 1. REQUESTS =================== -->
+  <div class="card">
+    <h2>1 · Withdrawal requests</h2>
+    <div class="body">
+      <div id="reqList"></div>
+      <button id="btnImport">Import into a payout run →</button>
+      <p class="note">
+        Workers tap <b>বেতন তুলুন</b> in their own app. Requests collect here
+        until the office runs a payout.
+      </p>
+    </div>
+  </div>
+
+  <!-- =================== 2. THE RUN =================== -->
+  <div class="card">
+    <h2>2 · Payout run</h2>
+    <div class="body">
+      <div id="batchBox"><div class="empty">Nothing imported yet.</div></div>
+    </div>
+  </div>
+
+  <!-- =================== 3. THE PORTAL =================== -->
+  <div class="card bk">
+    <h2>bKash Corporate Disbursement <span class="tag">SIMULATED</span></h2>
+    <div class="body">
+      <div id="portalBox"><div class="empty">No run to send.</div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- =================== 4. THE WORKER'S PHONE =================== -->
+<div class="card" style="margin-top:14px">
+  <h2>4 · What lands on the workers' phones</h2>
+  <div class="body">
+    <div id="smsBox"><div class="empty">No messages — nothing has been paid yet.</div></div>
+  </div>
+</div>
+
+<div class="log">
+  <b>What moved, and when</b>
+  <ol id="log"><li>Nothing yet. Press the buttons left to right.</li></ol>
+</div>
+
+<script>
+/* ==========================================================================
+   STATE. Deliberately tiny -- this is a mockup, not the product.
+   ========================================================================== */
+// DELIBERATELY TOO SMALL. The five requests total ৳5,615 and the wallet holds
+// ৳4,000, so the first thing the run does is refuse to send. That is the point:
+// it forces the demo through the top-up step, which is where the one genuinely
+// counter-intuitive rule lives (a top-up must NOT change cash on hand).
+// Start it at 50,000 and the whole guard is dead code nobody ever sees.
+const START_WALLET = 4000;    // the estate pre-funded its bKash wallet
+const START_OFFICE = 71540;   // cash in the office safe
+
+let wallet  = START_WALLET;
+let office  = START_OFFICE;
+let batch   = null;           // null until Import is pressed
+
+const requests = [
+  { id:1, name:"Abdul Karim",   code:"CG001", phone:"+8801560048649", amt:1220, paid:false },
+  { id:2, name:"Rahima Begum",  code:"CG002", phone:"+8801983414963", amt:980,  paid:false },
+  { id:3, name:"Jamal Uddin",   code:"CG003", phone:"+8801754889771", amt:1450, paid:false },
+  { id:4, name:"Fatema Khatun", code:"CG004", phone:"+8801332442132", amt:1105, paid:false },
+  { id:5, name:"Nurul Islam",   code:"CG005", phone:"+8801710000005", amt:860,  paid:false },
+];
+
+const taka = n => "৳" + Number(n).toLocaleString("en-IN");
+const $ = id => document.getElementById(id);
+
+function say(text){
+  const ol = $("log");
+  if (ol.dataset.started !== "1"){ ol.innerHTML = ""; ol.dataset.started = "1"; }
+  const li = document.createElement("li");
+  li.innerHTML = text;
+  ol.appendChild(li);
+}
+
+/* Flash a figure green when it changes, so a watcher sees WHICH one moved. */
+function setFig(id, value){
+  const el = $(id);
+  const next = taka(value);
+  if (el.textContent !== next){
+    el.textContent = next;
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 600);
+  }
+}
+
+function render(){
+  // --- money bar ---------------------------------------------------------
+  // Cash on hand is office + wallet. The wallet is the estate's OWN money in
+  // a second pocket, so moving cash into it changes nothing overall -- that
+  // is the single most misunderstood part of the real system.
+  setFig("mCash",   office + wallet);
+  setFig("mWallet", wallet);
+  setFig("mOwed",   requests.filter(r => !r.paid).reduce((s,r) => s + r.amt, 0));
+
+  // --- 1. requests -------------------------------------------------------
+  const pending = requests.filter(r => !r.paid);
+  $("reqList").innerHTML = pending.length
+    ? pending.map(r => `
+        <div class="row">
+          <div class="name"><b>${r.name}</b><span>${r.code} · ${r.phone}</span></div>
+          <div class="amt">${taka(r.amt)}</div>
+        </div>`).join("")
+    : `<div class="empty">All requests paid.</div>`;
+  $("btnImport").disabled = pending.length === 0 || batch !== null;
+
+  // --- 2. the run --------------------------------------------------------
+  if (!batch){
+    $("batchBox").innerHTML = `<div class="empty">Nothing imported yet.</div>`;
+  } else {
+    const short = batch.total > wallet;
+    $("batchBox").innerHTML = `
+      <div class="row"><div class="name"><b>${batch.ref}</b>
+        <span>${batch.items.length} workers · built ${batch.when}</span></div>
+        <span class="pill">${batch.sent ? "SENT" : "DRAFT"}</span></div>
+      <div class="row"><div class="name">Total to pay</div>
+        <div class="amt">${taka(batch.total)}</div></div>
+      <div class="row"><div class="name">Wallet balance</div>
+        <div class="amt">${taka(wallet)}</div></div>
+      ${short ? `<div class="warn"><b>Short by ${taka(batch.total - wallet)}.</b>
+          Top up the wallet before sending. The run checks the balance BEFORE
+          paying anyone, so nobody is half-paid.</div>` : ``}
+      ${batch.sent ? `<p class="note">Sent. The ledger has one row per worker.</p>`
+        : `<button class="ghost" id="btnTopUp">Top up wallet +৳10,000</button>`}
+      <p class="note">Importing builds the list. <b>It moves no money.</b></p>`;
+    if (!batch.sent) $("btnTopUp").onclick = topUp;
+  }
+
+  // --- 3. the portal -----------------------------------------------------
+  if (!batch){
+    $("portalBox").innerHTML = `<div class="empty">No run to send.</div>`;
+  } else {
+    $("portalBox").innerHTML = `
+      ${batch.items.map(it => `
+        <div class="row">
+          <div class="name"><b>${it.name}</b>
+            <span>${it.phone}${it.trx ? ` · <span class="trx">${it.trx}</span>` : ""}</span></div>
+          <div class="amt">${taka(it.amt)}</div>
+          <span class="pill ${it.trx ? "paid" : ""}">${it.trx ? "PAID" : "queued"}</span>
+        </div>`).join("")}
+      ${batch.sent
+        ? `<p class="note">Every row has a SIM transaction id. In the real
+             system each one also posts to Finance and texts the worker.</p>`
+        : `<button class="bk" id="btnSend" ${batch.total > wallet ? "disabled" : ""}>
+             Send ${taka(batch.total)} to ${batch.items.length} workers
+           </button>
+           <p class="note">This is the step that moves money.</p>`}`;
+    if (!batch.sent && batch.total <= wallet) $("btnSend").onclick = send;
+  }
+
+  // --- 4. the workers' phones -------------------------------------------
+  // Deliberately LAST and deliberately separate. The text is the only part of
+  // this whole flow the worker actually sees, and it is the part most likely
+  // to be wrong -- so it gets its own panel rather than a tick in a table.
+  const texted = requests.filter(r => r.sms);
+  $("smsBox").innerHTML = texted.length
+    ? texted.map(r => `
+        <div class="sms">
+          <div class="to">${r.name} · ${r.phone}</div>
+          <div class="bubble">${r.sms}</div>
+        </div>`).join("")
+      + `<p class="note">Sent through the estate's own transport, not bKash.
+           <code>SMS_PROVIDER=macmessages</code> drives Messages.app on the Mac;
+           a second switch in Settings must also be armed or nothing transmits.</p>`
+    : `<div class="empty">No messages — nothing has been paid yet.</div>`;
+}
+
+/* ==========================================================================
+   THE THREE ACTIONS
+   ========================================================================== */
+
+// IMPORT -- builds the list. Touches no balance, on purpose.
+function importRun(){
+  const items = requests.filter(r => !r.paid).map(r => ({...r, trx:null}));
+  batch = {
+    ref: "PAYRUN-" + new Date().toISOString().slice(0,10).replace(/-/g,""),
+    items,
+    total: items.reduce((s,i) => s + i.amt, 0),
+    when: new Date().toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"}),
+    sent: false,
+  };
+  say(`<b>Imported</b> ${items.length} requests, ${taka(batch.total)} total.
+       Cash on hand unchanged — a list is not a payment.`);
+  render();
+}
+
+// TOP UP -- office cash into the estate's own wallet.
+// CASH ON HAND DOES NOT CHANGE. This is the bit people get wrong: the wallet
+// belongs to the estate, so this is one pocket to another, not a payment.
+function topUp(){
+  const amt = 10000;
+  office -= amt;
+  wallet += amt;
+  say(`<b>Topped up</b> the wallet by ${taka(amt)}.
+       Cash on hand <b>unchanged</b> — office money moved into the estate's own
+       wallet. Counting this as spending would double-count it later.`);
+  render();
+}
+
+// SEND -- the only step that moves money out.
+function send(){
+  if (batch.total > wallet) return;              // guarded in the UI too
+  batch.items.forEach((it, i) => {
+    it.trx = "SIM" + Date.now().toString().slice(-6) + (i + 1);
+    const r = requests.find(r => r.id === it.id);
+    if (r){
+      r.paid = true;
+      // THE EXACT WORDING THE BACKEND SENDS, copied from
+      // SmsService.notifyWithdrawalStatus -- not a paraphrase. A mockup that
+      // invents friendlier text is worse than no mockup: it sets an
+      // expectation the product does not meet, and the wording of a money
+      // message is the part worth arguing about before it ships.
+      r.sms = "Cha Ghor: Your bKash withdrawal of BDT "
+            + it.amt.toFixed(2) + " was approved and paid.";
+    }
+  });
+  wallet -= batch.total;
+  batch.sent = true;
+  say(`<b>Sent</b> ${taka(batch.total)} to ${batch.items.length} workers.
+       Wallet down ${taka(batch.total)}, so <b>cash on hand down
+       ${taka(batch.total)}</b>. This money has left the estate.`);
+  say(`<b>Texted</b> ${batch.items.length} workers. The SMS goes out per worker,
+       after their own payment — never one message for the whole batch, so a
+       partial failure cannot tell anybody they were paid when they were not.`);
+  render();
+}
+
+$("btnImport").onclick = importRun;
+render();
+</script>
+</body>
+</html>

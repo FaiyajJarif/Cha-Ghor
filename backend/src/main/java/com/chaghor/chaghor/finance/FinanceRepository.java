@@ -48,6 +48,32 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
           COALESCE(SUM(amount) FILTER (WHERE category IN ('EXPENSE','PAYROLL')), 0) AS \"totalExpenses\",
           COALESCE(SUM(CASE
                    WHEN category = 'REVENUE' THEN amount
+                   -- Wages withheld against an advance. NO CASH MOVES: the
+                   -- estate pays less on the day, and the cash already left
+                   -- when the advance was handed over. Without this arm it
+                   -- would fall through to ELSE -amount and reduce cash a
+                   -- second time for money that never moved twice.
+                   -- Funding the bKash wallet that the estate itself owns.
+                   -- NO CASH LEAVES: money moves from the office into that
+                   -- wallet, so Cash on Hand (office + wallet) is unchanged.
+                   -- V44. Without this arm it would fall through to
+                   -- ELSE -amount and cash would drop at top-up AND again when
+                   -- the wages are actually paid out of the wallet -- the same
+                   -- taka counted out twice, which is the whole reason the
+                   -- wallet is modelled as a second pocket rather than a payee.
+                   --
+                   -- NO APOSTROPHES ANYWHERE IN THIS QUERY, DELIBERATELY.
+                   -- Spring Data scans the @Query string for quoted ranges
+                   -- BEFORE any SQL parser sees it, and it does not know what a
+                   -- SQL comment is. A single possessive apostrophe in prose
+                   -- opens a quoted range that never closes, and the whole
+                   -- application refuses to start with "starts a quoted range
+                   -- at N, but never ends it". That is exactly how this arm was
+                   -- first written, and then how the warning about it was
+                   -- first written too. Write around it: "the estate wallet",
+                   -- never the possessive form.
+                   WHEN COALESCE(source_type, '') = 'bkash_topup' THEN 0
+                   WHEN COALESCE(source_type, '') = 'advance_in' THEN 0
                    WHEN COALESCE(source_type, '') IN ('loan_in', 'loan_in_reversal') THEN
                         CASE WHEN EXISTS (SELECT 1 FROM loan_repayment_entry r
                                            WHERE r.id = finance_ledger.source_id
@@ -122,13 +148,13 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
     // bind parameter typed as text (same trick as search()).
     @Query(value = """
         SELECT * FROM finance_ledger e
-        WHERE COALESCE(e.source_type, '') IN ('payroll','withdrawal','loan_out','loan_in')
+        WHERE COALESCE(e.source_type, '') IN ('payroll','withdrawal','loan_out','loan_in','advance_out','advance_in')
           AND (:kind = '' OR COALESCE(e.source_type, '') = :kind)
         ORDER BY e.entry_date DESC, e.id DESC
         """,
         countQuery = """
         SELECT count(*) FROM finance_ledger e
-        WHERE COALESCE(e.source_type, '') IN ('payroll','withdrawal','loan_out','loan_in')
+        WHERE COALESCE(e.source_type, '') IN ('payroll','withdrawal','loan_out','loan_in','advance_out','advance_in')
           AND (:kind = '' OR COALESCE(e.source_type, '') = :kind)
         """,
         nativeQuery = true)
@@ -141,14 +167,17 @@ public interface FinanceRepository extends JpaRepository<FinanceEntry, Long> {
     @Query(value = """
         SELECT
           COALESCE(SUM(amount) FILTER (
-            WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out')), 0) AS \"totalOut\",
+            -- advance_out is real cash leaving, so it belongs in the outflow
+            -- total even though it is not an expense. advance_in is NOT here:
+            -- no cash moved, the estate simply paid less that day.
+            WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out','advance_out')), 0) AS \"totalOut\",
           COALESCE(SUM(amount) FILTER (
             WHERE COALESCE(source_type, '') = 'loan_in'
               AND NOT EXISTS (SELECT 1 FROM loan_repayment_entry r
                                WHERE r.id = finance_ledger.source_id
                                  AND r.payroll_id IS NOT NULL)), 0) AS \"totalIn\"
         FROM finance_ledger
-        WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out','loan_in')
+        WHERE COALESCE(source_type, '') IN ('payroll','withdrawal','loan_out','loan_in','advance_out','advance_in')
           AND (:kind = '' OR COALESCE(source_type, '') = :kind)
         """, nativeQuery = true)
     ActivityTotals activityTotals(@Param("kind") String kind);

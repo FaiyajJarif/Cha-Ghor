@@ -100,7 +100,18 @@ public class WithdrawalService {
             String account = (worker != null && worker.getFullName() != null)
                     ? worker.getFullName()
                     : ("Worker #" + w.getWorkerId());
-            financeService.postWithdrawal(w.getId(), account, w.getAmount(), LocalDate.now());
+            // WAGES ARE AN EXPENSE. AN ADVANCE IS A RECEIVABLE.
+            //
+            // Both move the same cash, so both used to post identically as
+            // PAYROLL -- which meant the estate's expenses, profit margin and
+            // health score were overstated by every advance still outstanding.
+            // The advance is money lent against work not yet done; the cost is
+            // recognised later, as it is worked off.
+            if (w.getKind() == WithdrawalKind.advance) {
+                financeService.postAdvance(w.getId(), account, w.getAmount(), LocalDate.now());
+            } else {
+                financeService.postWithdrawal(w.getId(), account, w.getAmount(), LocalDate.now());
+            }
 
             // NO recoverAdvance CALL HERE, AND THAT IS THE POINT.
             //

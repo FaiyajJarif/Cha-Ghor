@@ -87,8 +87,12 @@ function StatCard({
         : "text-cg-ink/50";
   return (
     <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
+      <div className="flex items-start justify-between gap-2">
+        {/* min-w-0 so a long label can shrink instead of pushing the icon out
+            of the card. A flex child defaults to min-width:auto, which refuses
+            to go below its content width -- the reason the row overflowed
+            rather than wrapping. */}
+        <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
         <span
@@ -97,10 +101,29 @@ function StatCard({
           <Icon size={18} />
         </span>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <p className="text-2xl font-extrabold text-cg-ink">{value}</p>
+      {/* STOCK VALUE OVERFLOWED THE CARD, and this is why.
+          "৳1,24,56,789.00" is 15 characters. At text-2xl in a six-column grid
+          each card is roughly 200px, and nothing here let the text shrink:
+          the <p> had no min-w-0, so as a flex child it kept its full content
+          width and pushed straight through the card's padding.
+
+          Three changes, all needed:
+            min-w-0   lets the text box become narrower than its content
+            truncate  ends it with an ellipsis instead of spilling
+            title     keeps the full figure available on hover, so nothing is
+                      actually lost -- truncating a money value with no way to
+                      read it would trade one bug for a worse one.
+          The step down to text-xl on the narrowest screens buys ~4 characters
+          before truncation is needed at all. */}
+      <div className="mt-2 flex min-w-0 items-center gap-2">
+        <p
+          className="min-w-0 truncate text-xl font-extrabold tabular-nums text-cg-ink sm:text-2xl"
+          title={typeof value === "string" ? value : undefined}
+        >
+          {value}
+        </p>
         {deltaCount ? (
-          <span className="inline-flex items-center rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-semibold text-green-700">
+          <span className="inline-flex shrink-0 items-center rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-semibold text-green-700">
             +{deltaCount}
           </span>
         ) : null}
@@ -527,7 +550,10 @@ export default function Inventory() {
       )}
 
       {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Six across only on a genuinely wide screen. At xl (1280px) six cards
+          are ~190px each, which is where a lakh-scale currency value stops
+          fitting no matter how it is styled. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <StatCard
           icon={LuBoxes}
           label="Total Items"

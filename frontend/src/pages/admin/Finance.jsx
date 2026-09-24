@@ -37,6 +37,8 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import AnomalyPanel from "../../components/admin/AnomalyPanel";
+// One card shape across all three consoles — see RecordCard.
+import RecordCard, { CARD_PILL, CARD_CHIP } from "../../components/admin/RecordCard";
 import { todayISO } from "../../lib/localDate";
 
 const PAGE_SIZE = 10;
@@ -117,10 +119,13 @@ function StatCard({
   const hasDelta = deltaPct !== undefined && deltaPct !== null;
   const up = Number(deltaPct) >= 0;
   return (
-    <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, and
+    // a taka figure has no break opportunity, so without this the KPI grid
+    // grew wider than the phone and dragged the whole page with it.
+    <div className="min-w-0 rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1">
+          <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
             {label}
           </p>
           {info ? <InfoTip text={info} /> : null}
@@ -131,7 +136,12 @@ function StatCard({
           <Icon size={18} />
         </span>
       </div>
-      <p className={`mt-2 text-2xl font-extrabold ${valueColor}`}>{value}</p>
+      <p
+        className={`mt-2 truncate text-xl font-extrabold tabular-nums sm:text-2xl ${valueColor}`}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </p>
       <div className="mt-1 flex items-center gap-2">
         {hasDelta ? (
           <span
@@ -209,7 +219,7 @@ function AddEntryModal({ onClose, onSaved }) {
       return setError("Enter a valid amount.");
     setSaving(true);
     try {
-      await api.post("/finance/entries", {
+      const { data } = await api.post("/finance/entries", {
         entryDate: form.entryDate || null,
         refId: form.refId || null,
         category: form.category,
@@ -219,7 +229,9 @@ function AddEntryModal({ onClose, onSaved }) {
         dueDate: form.status === "PENDING" ? form.dueDate || null : null,
         note: form.note || null,
       });
-      onSaved();
+      // Hand the saved row back. The page needs it to work out whether the
+      // filters currently in force would hide what was just created.
+      onSaved(data);
     } catch (err) {
       setError(apiError(err, "Could not save this entry. Try again."));
     } finally {
@@ -365,6 +377,16 @@ const KIND_META = {
   // money did, so it is deliberately not coloured as an inflow.
   LOAN_IN_WAGE: {
     label: "Loan repaid (wages)",
+    cls: "bg-cg-green/10 text-cg-ink/70",
+  },
+  // An advance is money LENT against work not yet done, so it is coloured like
+  // a loan rather than like a wage. It leaves cash but is not a cost.
+  ADVANCE_OUT: { label: "Advance out", cls: "bg-rose-100 text-rose-700" },
+  // The wage cost being recognised as the advance is worked off. NO CASH MOVES
+  // -- the worker is simply paid less that day -- so it is not coloured as an
+  // outflow, the same treatment as a wage-deducted loan repayment.
+  ADVANCE_IN: {
+    label: "Advance worked off",
     cls: "bg-cg-green/10 text-cg-ink/70",
   },
   OTHER: { label: "Other", cls: "bg-cg-green/10 text-cg-ink/70" },
@@ -885,7 +907,52 @@ export default function Finance() {
           </form>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* ============ MOBILE: THE LEDGER AS CARDS ============
+            Six columns at min-w-[720px] is two phone screens. Amount and Status
+            were both past the right edge — on the ledger, which exists so that
+            every taka that moved has a row somebody can read. */}
+        <ul className="sm:hidden">
+          {loading ? (
+            <li className="px-4 py-10 text-center text-sm text-cg-ink/50">Loading…</li>
+          ) : ledger.entries.length === 0 ? (
+            <li className="px-4 py-10 text-center text-sm text-cg-ink/50">
+              No transactions found.
+            </li>
+          ) : (
+            ledger.entries.map((e) => (
+              <RecordCard
+                key={e.id}
+                title={e.account}
+                meta={
+                  <>
+                    {e.date}
+                    {e.refId ? ` • ${e.refId}` : ""}
+                  </>
+                }
+                pills={<StatusPill status={e.status} />}
+                footer={
+                  <>
+                    <span
+                      className={`${CARD_PILL} ${
+                        CATEGORY_BADGE[e.category] || "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {titleCase(e.category)}
+                    </span>
+                    {/* The amount is always POSITIVE in finance_ledger
+                        (chk_finance_amount_nonneg); direction is carried by the
+                        category, which is why the two sit together here. */}
+                    <span className={`${CARD_CHIP} ml-auto bg-cg-dark text-white`}>
+                      {taka(e.amount)}
+                    </span>
+                  </>
+                }
+              />
+            ))
+          )}
+        </ul>
+
+        <div className="hidden overflow-x-auto sm:block">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-cg-ink/60">
               <tr>
@@ -1001,6 +1068,8 @@ export default function Finance() {
               <option value="withdrawal">Withdrawals</option>
               <option value="loan_out">Loan out</option>
               <option value="loan_in">Loan repaid</option>
+              <option value="advance_out">Advance out</option>
+              <option value="advance_in">Advance worked off</option>
             </select>
             <button
               type="button"
@@ -1126,11 +1195,44 @@ export default function Finance() {
       {showAdd ? (
         <AddEntryModal
           onClose={() => setShowAdd(false)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setShowAdd(false);
-            setPage(0);
+
+            // A NEW ENTRY THAT THE ACTIVE FILTERS HIDE LOOKS LIKE A FAILED SAVE.
+            //
+            // The ledger table is filtered by category, status and a search box.
+            // Add an EXPENSE while the table is filtered to REVENUE and the row
+            // is saved correctly and simply not displayed -- indistinguishable,
+            // from the user's side, from the entry never having been created.
+            // So any filter that would exclude it is cleared, and the row the
+            // person just typed is on screen when the modal closes.
+            const hiddenByCategory = category && saved && saved.category !== category;
+            const hiddenByStatus = status && saved && saved.status !== status;
+            const hiddenBySearch =
+              q &&
+              saved &&
+              !(
+                (saved.account || "").toLowerCase().includes(q.toLowerCase()) ||
+                (saved.refId || "").toLowerCase().includes(q.toLowerCase())
+              );
+            if (hiddenByCategory) setCategory("");
+            if (hiddenByStatus) setStatus("");
+            if (hiddenBySearch) setQ("");
+
             loadTop().catch(() => {});
-            loadLedger().catch(() => {});
+
+            // Newest rows sort first, so the new entry is on page 0.
+            //
+            // Calling loadLedger() here as well would race: it closes over the
+            // OLD page number, so on page 3 it would refetch page 3 and
+            // overwrite the page-0 result the effect below is fetching. Setting
+            // the page is enough -- the [page, category, status] effect reloads.
+            if (page !== 0) {
+              setPage(0);
+            } else if (!hiddenByCategory && !hiddenByStatus && !hiddenBySearch) {
+              // Nothing changed that would retrigger the effect, so refetch here.
+              loadLedger().catch(() => {});
+            }
           }}
         />
       ) : null}

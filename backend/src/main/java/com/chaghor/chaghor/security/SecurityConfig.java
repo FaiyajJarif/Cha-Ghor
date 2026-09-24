@@ -97,7 +97,12 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new LoginRateLimitFilter(java.util.Set.of(trustedProxies)),
                         UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // AFTER jwtAuthFilter, deliberately: it keys buckets on the JWT
+                // subject, which only exists in the SecurityContext once that
+                // filter has run. Registered before the authorisation check so a
+                // flood is rejected without touching the database.
+                .addFilterAfter(new ApiRateLimitFilter(), JwtAuthFilter.class);
         return http.build();
     }
 
@@ -138,7 +143,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(Arrays.asList(allowedOrigins)); // env-driven allowlist
+        // PATTERNS, NOT EXACT ORIGINS.
+        //
+        // WebSocketConfig has always used setAllowedOriginPatterns, so a LAN
+        // wildcard worked for the sockets and was silently REJECTED for every
+        // REST call -- the live boards would connect while the pages feeding
+        // them returned CORS errors. Half-working is the worst outcome here
+        // because it looks like an intermittent backend fault.
+        //
+        // setAllowedOrigins also cannot express a wildcard at all alongside
+        // allowCredentials(true); the pattern form is what supports both.
+        config.setAllowedOriginPatterns(Arrays.asList(allowedOrigins));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

@@ -29,7 +29,7 @@ import TakeMoneyModal from "./TakeMoneyModal";
 // be paid nothing for about 3 days" is the single fact that decides whether
 // this is a useful facility or the thing that sends someone to a moneylender.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -88,7 +88,7 @@ export default function MoneyActions({ onChanged }) {
           <p className="text-[11px] font-semibold text-[#14493B]/50">
             আপনার জমা টাকা
           </p>
-          <p className="text-3xl font-extrabold text-[#14493B]">
+          <p className="truncate text-2xl font-extrabold tabular-nums text-[#14493B] sm:text-3xl">
             {taka(withdrawable)}
           </p>
           <p className="mt-1 text-xs text-[#14493B]/55">
@@ -97,6 +97,7 @@ export default function MoneyActions({ onChanged }) {
 
           <button
             type="button"
+            data-testid="worker-take-salary"
             onClick={() => setMode("salary")}
             disabled={withdrawable <= 0}
             className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#14493B] px-6 py-4 text-base font-extrabold text-white transition hover:brightness-110 disabled:opacity-40"

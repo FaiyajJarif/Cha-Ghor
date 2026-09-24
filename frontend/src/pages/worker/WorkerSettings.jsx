@@ -35,7 +35,7 @@ import { apiError } from "../../lib/apiError";
 // the preferences, which nothing did until now -- they were written by the
 // settings screen and consulted by nobody for the whole life of the project.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -202,7 +202,7 @@ export default function WorkerSettings() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold text-[#14493B]">সেটিংস</h1>
+        <h1 className="text-2xl font-extrabold text-[#14493B] sm:text-3xl">সেটিংস</h1>
         <p className="text-sm text-[#14493B]/60">
           পাসওয়ার্ড বদলান, আর কোন খবর মোবাইলে পাবেন সেটি ঠিক করুন
         </p>
@@ -257,7 +257,7 @@ export default function WorkerSettings() {
           </div>
         </div>
 
-        <div className="grid gap-4 p-5 sm:grid-cols-2">
+        <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
           <div>
             <p className="text-[11px] font-semibold text-[#14493B]/50">নাম</p>
             <p className="text-sm font-bold text-[#14493B]">

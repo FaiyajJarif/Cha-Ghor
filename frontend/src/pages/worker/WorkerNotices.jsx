@@ -1,4 +1,5 @@
 import NoticeBoard from "../../components/worker/NoticeBoard";
+import PaymentNotices from "../../components/worker/PaymentNotices";
 
 // খবর ও নোটিশ — its own feature, not a card on the profile.
 //
@@ -27,6 +28,13 @@ export default function WorkerNotices() {
           অবস্থা
         </p>
       </div>
+
+      {/* Money first. A payment is the one message on this page the worker is
+          actually waiting for, and burying it under three field bulletins is
+          how it gets missed. No showEmpty here -- a worker who has never been
+          paid through the app should not be shown an empty money card every
+          time he opens his notices. */}
+      <PaymentNotices />
 
       {/* showEmpty, because on a page of its own an empty board must say so
           rather than render nothing at all. */}

@@ -140,3 +140,11 @@ tmp/
 # LOCAL SNAPSHOT TOOL (cg-snap.sh), if used
 # ============================================================
 .cg-snapshots/
+backups/
+
+# Runtime uploads — case evidence photos, not source
+backend/uploads/
+
+# Runtime uploads and training data — not source
+backend/uploads/
+ai_service/dataset/

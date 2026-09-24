@@ -266,8 +266,19 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
             /* ---------- confirm the text messages ----------
                The case is already filed. Nothing has reached a phone yet, and
                nothing will until the button at the bottom is pressed. */
-            <div className="flex max-h-[92vh] flex-col overflow-hidden">
-              <div className={`flex items-center justify-between ${HEADER} px-6 py-5`}>
+            /* WAS `max-h-[92vh]` AGAIN, INSIDE A PARENT ALREADY CAPPED AT 92vh.
+               A second viewport-relative cap on a child tells it nothing about
+               the space its PARENT has: it is sized by its own content up to
+               92vh of the screen, while the parent clips at 92vh minus its own
+               chrome. The confirm panel's scroll region therefore never got a
+               bounded height, and the Send button at the bottom was clipped.
+
+               min-h-0 + flex-1 is the fix: take exactly the space the parent
+               has left, and no more. min-h-0 matters because a flex item's
+               default min-height is auto, which refuses to shrink below its
+               content — the vertical twin of the min-width bug on the cards. */
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className={`flex shrink-0 items-center justify-between gap-2 ${HEADER} px-4 py-4 sm:px-6 sm:py-5`}>
                 <div>
                   <h3 className="text-xl font-extrabold text-white">Send as SMS?</h3>
                   <p className="text-xs text-white/60">
@@ -284,7 +295,7 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
                 </button>
               </div>
 
-              <div className="flex-1 space-y-4 overflow-y-auto bg-[#F4FFE9] px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-[#F4FFE9] px-4 py-5 sm:px-6">
                 <div className="rounded-xl bg-white p-4 ring-1 ring-[#13483B]/15">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-cg-ink/50">
                     Who will receive this
@@ -370,7 +381,7 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
                 </p>
               </div>
 
-              <div className={`flex items-center justify-end gap-2 ${HEADER} px-6 py-4`}>
+              <div className={`flex shrink-0 flex-wrap items-center justify-end gap-2 ${HEADER} px-4 py-4 sm:px-6`}>
                 <button
                   type="button"
                   onClick={() => setSmsStage("idle")}
@@ -444,7 +455,7 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
             </div>
           ) : (
             <>
-              <div className={`flex items-center justify-between ${HEADER} px-6 py-5`}>
+              <div className={`flex shrink-0 items-center justify-between gap-2 ${HEADER} px-4 py-4 sm:px-6 sm:py-5`}>
                 <div>
                   <h3 className="text-xl font-extrabold text-white">New broadcast</h3>
                   <p className="text-xs text-white/60">
@@ -461,7 +472,7 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
                 </button>
               </div>
 
-              <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
                 {error && (
                   <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">
                     {error}
@@ -660,7 +671,7 @@ export default function BroadcastComposer({ open, prefill, zones, onSent, onClos
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 border-t border-[#13483B]/10 px-6 py-4">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-[#13483B]/10 px-4 py-4 sm:px-6">
                 <button
                   type="button"
                   onClick={onClose}

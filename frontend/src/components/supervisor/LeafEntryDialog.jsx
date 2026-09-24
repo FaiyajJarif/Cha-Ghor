@@ -73,22 +73,38 @@ export default function LeafEntryDialog({
     <>
       <div className="fixed inset-0 z-[1200] bg-black/40" onClick={onClose} aria-hidden />
       <div className="fixed inset-0 z-[1210] flex items-center justify-center p-4">
+        {/* ============ THIS CARD COULD NOT BE SCROLLED ============
+            It was `w-full max-w-md overflow-hidden` and nothing else: no
+            max-height, no column layout, no scroll region. On a short screen —
+            or on any phone once the error line and the "this is money" warning
+            are both showing — the content grew past the viewport and
+            overflow-hidden simply CLIPPED it. Save correction and Remove
+            weigh-in are the last thing in the card, so the buttons went with
+            it, and there was no scrollbar to reach them.
+
+            Now the same three-part shell every other dialog uses: a capped
+            column, a header and footer that cannot shrink, and a middle that
+            scrolls. */}
         <div
-          className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl"
+          className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-label={mode === "delete" ? "Remove weigh-in" : "Correct weigh-in"}
         >
           {/* Header bar — same as every other modal */}
-          <div className={`flex items-center justify-between ${HEADER} px-6 py-5`}>
-            <div className="flex items-center gap-2">
-              {mode === "delete" ? <LuTrash2 size={18} className="text-white" />
-                                 : <LuPencil size={18} className="text-white" />}
-              <div>
-                <h3 className="text-lg font-extrabold text-white">
+          <div
+            className={`flex shrink-0 items-center justify-between gap-2 ${HEADER} px-4 py-4 sm:px-6 sm:py-5`}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              {mode === "delete" ? <LuTrash2 size={18} className="shrink-0 text-white" />
+                                 : <LuPencil size={18} className="shrink-0 text-white" />}
+              {/* min-w-0 + truncate, or a long worker name pushes the close
+                  button off the right edge of a 360px card. */}
+              <div className="min-w-0">
+                <h3 className="truncate text-base font-extrabold text-white sm:text-lg">
                   {mode === "delete" ? "Remove this weigh-in" : "Correct this weigh-in"}
                 </h3>
-                <p className="text-xs text-white/60">
+                <p className="truncate text-xs text-white/60">
                   {entry.workerName}
                   {entry.zone ? ` · ${entry.zone}` : ""}
                 </p>
@@ -98,13 +114,13 @@ export default function LeafEntryDialog({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="grid h-9 w-9 place-items-center rounded-full bg-white/20 text-white transition hover:bg-white/30"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/20 text-white transition hover:bg-white/30"
             >
               <LuX size={16} />
             </button>
           </div>
 
-          <div className="space-y-4 bg-[#F4FFE9] px-6 py-5">
+          <div className="flex-1 space-y-4 overflow-y-auto bg-[#F4FFE9] px-4 py-5 sm:px-6">
             {error && (
               <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">{error}</p>
             )}
@@ -198,8 +214,12 @@ export default function LeafEntryDialog({
             )}
           </div>
 
-          {/* Footer bar — mirrors the header */}
-          <div className={`flex items-center justify-end gap-2 ${HEADER} px-6 py-4`}>
+          {/* Footer bar — mirrors the header. shrink-0 so it keeps its height
+              and stays pinned while the middle scrolls; this is the bar that
+              was being clipped off the bottom. */}
+          <div
+            className={`flex shrink-0 items-center justify-end gap-2 ${HEADER} px-4 py-4 sm:px-6`}
+          >
             <button
               type="button"
               onClick={onClose}

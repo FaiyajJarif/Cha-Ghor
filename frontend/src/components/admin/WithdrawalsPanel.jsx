@@ -97,16 +97,24 @@ function StatCard({ icon: Icon, label, value, sub, tone = "default" }) {
         : "bg-cg-lime text-cg-green";
   const valColor = tone === "red" ? "text-red-600" : "text-cg-ink";
   return (
-    <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, and
+    // a taka figure has no break opportunity, so without this the KPI grid
+    // grew wider than the phone and dragged the whole page with it.
+    <div className="min-w-0 rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
         <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${chip}`}>
           <Icon size={18} />
         </span>
       </div>
-      <p className={`mt-2 text-2xl font-extrabold ${valColor}`}>{value}</p>
+      <p
+        className={`mt-2 truncate text-xl font-extrabold tabular-nums sm:text-2xl ${valColor}`}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </p>
       {sub ? <p className="mt-1 text-xs text-cg-ink/50">{sub}</p> : null}
     </div>
   );
@@ -135,7 +143,7 @@ function ConfirmDialog({ open, row, action, busy, onCancel, onConfirm }) {
       <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
         <div className="border-b border-cg-green/10 px-6 py-4">
           <h2 className="text-lg font-extrabold text-cg-ink">
-            {paying ? "Approve and pay?" : "Reject this request?"}
+            {paying ? "Approve and make a payout slip?" : "Reject this request?"}
           </h2>
         </div>
         <div className="space-y-3 px-6 py-5 text-sm text-cg-ink/80">
@@ -146,20 +154,34 @@ function ConfirmDialog({ open, row, action, busy, onCancel, onConfirm }) {
           </p>
           <p>
             {paying
-              ? "This marks the request as paid and texts the worker a confirmation."
+              ? "This adds the worker to a payout slip and downloads it as a CSV. No money moves yet."
               : "This marks the request as rejected and texts the worker that it was declined."}
           </p>
-          <p className="rounded-lg bg-cg-lime/40 px-3 py-2 text-xs">
-            This decision is final — a request can only be decided once.
-            {paying ? " The bKash payout is mocked for the demo; no real transfer happens." : ""}
-          </p>
+          {paying && (
+            <p className="rounded-lg bg-cg-lime/40 px-3 py-2 text-xs">
+              Next: open <span className="font-bold">bKash Payout</span>, upload the
+              slip and press Send. That is the step that pays the worker, texts them
+              and reduces Cash on Hand.
+            </p>
+          )}
+          {!paying && (
+            <p className="rounded-lg bg-cg-lime/40 px-3 py-2 text-xs">
+              This decision is final — a request can only be decided once.
+            </p>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-cg-green/10 px-6 py-4">
           <button type="button" className={BTN_GHOST} onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className={BTN_DARK} onClick={onConfirm} disabled={busy}>
-            {busy ? "Working\u2026" : paying ? "Approve & pay" : "Reject"}
+          <button
+            data-testid="withdrawal-confirm"
+            type="button"
+            className={BTN_DARK}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? "Working\u2026" : paying ? "Approve & make slip" : "Reject"}
           </button>
         </div>
       </div>
@@ -180,15 +202,27 @@ export default function WithdrawalsPanel() {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const [page, setPage] = useState(0);
+  // Withdrawal ids already sitting on a payout slip.
+  const [onSlip, setOnSlip] = useState(new Set());
 
   // The endpoint returns one status at a time, so the KPI row needs all three.
+  //
+  // /bkash/batched-ids comes along for the badge: a request that has been
+  // approved onto a slip still READS pending, because approving does not move
+  // money and the status must not claim it did. This is the only way to tell
+  // the two apart on screen.
   const loadAll = useCallback(async () => {
-    const [p, pd, rj] = await Promise.all([
+    const [p, pd, rj, batched] = await Promise.all([
       api.get("/withdrawals", { params: { status: "pending" } }),
       api.get("/withdrawals", { params: { status: "paid" } }),
       api.get("/withdrawals", { params: { status: "rejected" } }),
+      // Non-fatal: if this fails the panel still renders, it just cannot show
+      // the badge. A missing badge is a worse screen; a crashed one is no
+      // screen at all.
+      api.get("/bkash/batched-ids").catch(() => ({ data: [] })),
     ]);
     setData({ pending: p.data || [], paid: pd.data || [], rejected: rj.data || [] });
+    setOnSlip(new Set(batched.data || []));
   }, []);
 
   const refresh = useCallback(
@@ -219,17 +253,63 @@ export default function WithdrawalsPanel() {
     setPage(0);
   }, [tab]);
 
+  // Pull the slip down as a file.
+  //
+  // Through `api`, not a bare <a href>, because the endpoint is admin-only and
+  // a plain link carries no Authorization header -- it would 401 and the
+  // browser would save the error page as a .csv. responseType "blob" keeps the
+  // bytes intact; letting axios parse it as text mangles a UTF-8 Bangla name.
+  const downloadSlip = async (withdrawalIds) => {
+    const res = await api.post(
+      "/bkash/slip",
+      { withdrawalIds },
+      { responseType: "blob" },
+    );
+    const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `payout-slip-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick: revoking synchronously can cancel the download
+    // in Safari before it has read the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const decide = async () => {
     if (!confirm) return;
     const { row, action } = confirm;
     setBusy(true);
     try {
-      await api.post(`/withdrawals/${row.id}/decide`, { action });
-      setNotice(
-        action === "pay"
-          ? `Paid ${taka(row.amount)} to ${row.workerName || "the worker"}. Confirmation SMS logged.`
-          : `Rejected ${taka(row.amount)} for ${row.workerName || "the worker"}. Notification SMS logged.`,
-      );
+      if (action === "pay") {
+        // APPROVE NO LONGER PAYS, AND NO LONGER CREATES A BATCH EITHER.
+        //
+        // It used to call /bkash/batches and then download that batch's slip,
+        // which was self-defeating: the import only accepts withdrawals that
+        // are NOT already on a run, so producing the slip disqualified every
+        // row on it. Uploading the file the system had just generated answered
+        // "Nothing on that slip could be paid."
+        //
+        // Now the slip is a pure statement of intent -- nothing in the database
+        // changes when it is written -- and the upload is the single thing that
+        // creates the run.
+        //
+        // Deliberately NOT /withdrawals/{id}/decide: that posts to Finance and
+        // texts the worker immediately, which is the double-payment path we
+        // removed. The request stays `pending` until the bKash Send.
+        await downloadSlip([row.id]);
+        setNotice(
+          `Slip downloaded for ${row.workerName || "the worker"} ` +
+            `(${taka(row.amount)}). Nothing has been paid yet — upload it on ` +
+            `bKash Payout and press Send.`,
+        );
+      } else {
+        await api.post(`/withdrawals/${row.id}/decide`, { action });
+        setNotice(
+          `Rejected ${taka(row.amount)} for ${row.workerName || "the worker"}. Notification SMS logged.`,
+        );
+      }
       setConfirm(null);
       await refresh(true);
     } catch (err) {
@@ -380,7 +460,7 @@ export default function WithdrawalsPanel() {
                 </tr>
               ) : (
                 slice.map((r) => (
-                  <tr key={r.id}>
+                  <tr key={r.id} data-testid="withdrawal-row" data-status={r.status}>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-3">
                         <Avatar name={r.workerName} />
@@ -419,12 +499,30 @@ export default function WithdrawalsPanel() {
                     {tab === "pending" && isAdmin ? (
                       <td className="py-3 pr-4">
                         <div className="flex justify-end gap-2">
+                          {/*
+                            A REQUEST ON A RUN STILL READS "pending", because
+                            nothing has been paid yet -- the status must not
+                            claim otherwise. The badge is what distinguishes it.
+
+                            It appears once the slip has been UPLOADED, not when
+                            it was downloaded: approving writes no state, so
+                            there is nothing to show until the run exists. The
+                            Approve button stays available until then, which is
+                            correct -- re-downloading a slip costs nothing and
+                            cannot pay anybody twice.
+                          */}
                           <button
+                            data-testid="withdrawal-pay"
                             onClick={() => setConfirm({ row: r, action: "pay" })}
                             className="inline-flex items-center gap-1 rounded-lg bg-cg-dark px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-cg-darker"
                           >
-                            <LuCheck size={14} /> Pay
+                            <LuCheck size={14} /> Approve
                           </button>
+                          {onSlip.has(r.id) && (
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200">
+                              On a run
+                            </span>
+                          )}
                           <button
                             onClick={() => setConfirm({ row: r, action: "reject" })}
                             className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 ring-1 ring-red-200 transition hover:bg-red-50"

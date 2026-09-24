@@ -532,10 +532,12 @@ public class PayrollService {
         // payslip is a statement, so it must read that record.
         BigDecimal settledLoan = BigDecimal.ZERO;
         BigDecimal settledAdvance = BigDecimal.ZERO;
+        BigDecimal settledOverdraw = BigDecimal.ZERO;
         for (var st : settlementRepository
                 .findByWorkerIdAndWorkDateBetweenOrderByWorkDateAsc(w.getId(), start, end)) {
             settledLoan = settledLoan.add(nz(st.getToLoan()));
             settledAdvance = settledAdvance.add(nz(st.getToAdvance()));
+            settledOverdraw = settledOverdraw.add(nz(st.getToOverdraw()));
         }
         p.setLoanDeduction(settledLoan.setScale(2, RoundingMode.HALF_UP));
 
@@ -546,12 +548,22 @@ public class PayrollService {
         // remains the one hand-editable field.
         p.setAdvanceRecovery(settledAdvance.setScale(2, RoundingMode.HALF_UP));
 
+        // THE FOURTH DEDUCTION. Without this line net_payable was overstated by
+        // exactly the amount a worker was repaying for an overpaid day -- money
+        // that had genuinely been withheld from them, reported on the payslip as
+        // though they had received it.
+        p.setOverdrawRecovery(settledOverdraw.setScale(2, RoundingMode.HALF_UP));
+
         recomputeNet(p);
     }
 
     private void recomputeNet(Payroll p) {
+        // ALL FOUR. Settlement splits a day into loan, advance, overdraw and
+        // what the worker gets; the payslip has to subtract the same four or it
+        // is describing a different day.
         BigDecimal ded = nz(p.getLoanDeduction())
                 .add(nz(p.getAdvanceRecovery()))
+                .add(nz(p.getOverdrawRecovery()))
                 .add(nz(p.getOtherDeduction()));
         BigDecimal net = nz(p.getGrossAmount()).subtract(ded);
         // A payslip can be reduced to zero but never turned into a debt: if the
@@ -696,7 +708,8 @@ public class PayrollService {
                 p.getId(), p.getWorkerId(), name, role, zoneId, zoneName,
                 p.getPeriodStart(), p.getPeriodEnd(), p.getPresentDays(), leafNow,
                 p.getBaseAmount(), p.getSurplusAmount(), p.getGradeBonus(), p.getGrossAmount(),
-                p.getLoanDeduction(), p.getAdvanceRecovery(), p.getOtherDeduction(), p.getNetPayable(),
+                p.getLoanDeduction(), p.getAdvanceRecovery(), p.getOverdrawRecovery(),
+                p.getOtherDeduction(), p.getNetPayable(),
                 p.getStatus().name(), p.getPaidAt(), stale, staleReason);
     }
 

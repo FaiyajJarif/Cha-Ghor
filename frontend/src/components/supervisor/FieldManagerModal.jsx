@@ -333,7 +333,7 @@ export default function FieldManagerModal({
                     key={z.id}
                     className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-3 ring-1 ring-[#13483B59]"
                   >
-                    <span className="min-w-[9rem] flex-1">
+                    <span className="min-w-0 flex-1 sm:min-w-[9rem]">
                       <span className="block text-sm font-bold text-[#14493B]">
                         {z.name}
                         {z.code ? (
@@ -428,7 +428,7 @@ export default function FieldManagerModal({
                       key={z.id}
                       className="flex flex-wrap items-center gap-3 rounded-xl bg-white/60 p-3 ring-1 ring-[#13483B]/15"
                     >
-                      <span className="min-w-[9rem] flex-1 text-sm font-bold text-[#14493B]/50 line-through">
+                      <span className="min-w-0 flex-1 text-sm font-bold text-[#14493B]/50 line-through sm:min-w-[9rem]">
                         {z.name}
                       </span>
                       <button

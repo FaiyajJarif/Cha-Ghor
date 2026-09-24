@@ -164,7 +164,7 @@ export default function LoanRequestModal({ open, blockedBy, voice, onClose, onDo
           role="dialog"
           aria-label="ঋণের আবেদন"
         >
-          <div className={`flex items-center justify-between ${HEADER} px-6 py-5`}>
+          <div className={`flex shrink-0 items-center justify-between gap-2 ${HEADER} px-4 py-4 sm:px-6 sm:py-5`}>
             <div>
               <h3 className="text-xl font-extrabold text-white">ঋণের আবেদন</h3>
               <p className="text-xs text-white/60">
@@ -227,7 +227,7 @@ export default function LoanRequestModal({ open, blockedBy, voice, onClose, onDo
             </div>
           ) : (
             <>
-              <div className="flex-1 space-y-4 overflow-y-auto bg-[#F4FFE9] px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-[#F4FFE9] px-4 py-5 sm:px-6">
                 {error && (
                   <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-700">
                     {error}
@@ -338,7 +338,7 @@ export default function LoanRequestModal({ open, blockedBy, voice, onClose, onDo
                 )}
               </div>
 
-              <div className={`flex items-center justify-end gap-2 ${HEADER} px-6 py-4`}>
+              <div className={`flex shrink-0 flex-wrap items-center justify-end gap-2 ${HEADER} px-4 py-4 sm:px-6`}>
                 <button
                   type="button"
                   onClick={onClose}

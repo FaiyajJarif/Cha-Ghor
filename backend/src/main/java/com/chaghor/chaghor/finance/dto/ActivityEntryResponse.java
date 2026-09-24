@@ -54,11 +54,19 @@ public record ActivityEntryResponse(
             case "withdrawal" -> "WITHDRAWAL";
             case "loan_out" -> "LOAN_OUT";
             case "loan_in" -> wageDeducted ? "LOAN_IN_WAGE" : "LOAN_IN";
+            case "advance_out" -> "ADVANCE_OUT";
+            case "advance_in" -> "ADVANCE_IN";
             default -> "OTHER";
         };
     }
 
     private static String directionOf(String src, boolean wageDeducted) {
+        // Wages withheld against an earlier advance. NO CASH MOVES -- the money
+        // left when the advance was handed over, and the worker is simply paid
+        // less today. Labelling it OUT would show the same taka leaving twice.
+        if ("advance_in".equals(src)) {
+            return "NEUTRAL";
+        }
         if (!"loan_in".equals(src)) {
             return "OUT";
         }

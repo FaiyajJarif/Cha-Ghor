@@ -16,4 +16,10 @@ public interface VisionInferenceRepository extends JpaRepository<VisionInference
 
     // Recent reads of one subject, newest first — how the grader has been doing.
     List<VisionInference> findBySubjectTypeOrderByIdDesc(VisionSubject subjectType, Pageable pageable);
+
+    // Accuracy is reported PER MODEL (see VisionReviewService.accuracy). A
+    // shared page across both subjects would let a busy model crowd a quiet one
+    // out of its own statistics, so each is paged separately.
+    List<VisionInference> findBySubjectTypeAndReviewedAtIsNotNullOrderByReviewedAtDesc(
+            VisionSubject subjectType, Pageable pageable);
 }

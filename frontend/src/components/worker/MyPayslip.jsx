@@ -68,6 +68,9 @@ const ROWS = (p) => [
   ["মোট আয়", p.gross, false, true],
   ["ঋণ কর্তন", p.loanDeduction, true],
   ["অগ্রিম সমন্বয়", p.advanceRecovery, true],
+  // Repaying a day corrected after it was already drawn. Without this row the
+  // printed lines did not add up to the net shown beneath them.
+  ["আগের বেশি দেওয়া ফেরত", p.overdrawRecovery, true],
   ["অন্যান্য কর্তন", p.otherDeduction, true],
 ];
 
@@ -184,7 +187,10 @@ export default function MyPayslip({ open, period, worker, onClose }) {
 
       <div className="no-print fixed inset-0 z-[1200] bg-black/40" onClick={onClose} />
       <div className="no-print fixed inset-0 z-[1210] flex items-center justify-center p-4">
-        <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6">
+        {/* rounded-3xl and p-4 on a phone, to match every other dialog. p-6 was
+            48px of a 360px screen spent on padding around a payslip that is
+            mostly numbers in two columns. */}
+        <div className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-4 sm:p-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-lg font-extrabold text-[#14493B]">বেতন স্লিপ</h2>
             <button

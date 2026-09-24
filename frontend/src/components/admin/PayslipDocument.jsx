@@ -100,8 +100,11 @@ function OnePayslip({ row, config, daily }) {
   const gross = Number(row.grossAmount ?? 0);
   const loan = Number(row.loanDeduction ?? 0);
   const advance = Number(row.advanceRecovery ?? 0);
+  // Repaying an overpaid day. Omitting it made the printed net exceed what the
+  // worker was actually handed, by exactly this amount.
+  const overdraw = Number(row.overdrawRecovery ?? 0);
   const other = Number(row.otherDeduction ?? 0);
-  const totalDed = loan + advance + other;
+  const totalDed = loan + advance + overdraw + other;
 
   return (
     <section className="payslip-page mx-auto w-full max-w-[720px] bg-white p-8">
@@ -183,6 +186,11 @@ function OnePayslip({ row, config, daily }) {
           </h2>
           <Line label="Loan instalment" value={loan} negative />
           <Line label="Advance recovery" value={advance} negative />
+          {/* Only shown when it applies, so an ordinary payslip is not cluttered
+              with a line reading zero that invites the question "what is that?" */}
+          {overdraw > 0 && (
+            <Line label="Overpaid day repaid" value={overdraw} negative />
+          )}
           <Line label="Other" value={other} negative />
           <div className="mt-1 border-t border-cg-green/20 pt-1">
             <Line label="Total deductions" value={totalDed} strong negative />
@@ -241,6 +249,7 @@ function OnePayslip({ row, config, daily }) {
                 <th className="py-1 pr-2 text-right font-semibold">Earned</th>
                 <th className="py-1 pr-2 text-right font-semibold">Loan</th>
                 <th className="py-1 pr-2 text-right font-semibold">Advance</th>
+                <th className="py-1 pr-2 text-right font-semibold">Overpaid</th>
                 <th className="py-1 pr-2 text-right font-semibold">Worker gets</th>
                 <th className="py-1 font-semibold">Settled</th>
               </tr>
@@ -261,6 +270,9 @@ function OnePayslip({ row, config, daily }) {
                     </td>
                     <td className="py-1 pr-2 text-right text-rose-600">
                       {Number(d.toAdvance) > 0 ? "-" + taka(d.toAdvance) : "\u2014"}
+                    </td>
+                    <td className="py-1 pr-2 text-right text-rose-600">
+                      {Number(d.toOverdraw) > 0 ? "-" + taka(d.toOverdraw) : "\u2014"}
                     </td>
                     <td className="py-1 pr-2 text-right font-semibold text-cg-ink">
                       {taka(d.payable)}
@@ -283,6 +295,9 @@ function OnePayslip({ row, config, daily }) {
                 </td>
                 <td className="py-1 pr-2 text-right text-rose-600">
                   -{taka(daily.totalToAdvance)}
+                </td>
+                <td className="py-1 pr-2 text-right text-rose-600">
+                  -{taka(daily.totalToOverdraw)}
                 </td>
                 <td className="py-1 pr-2 text-right">{taka(daily.totalPayable)}</td>
                 <td className="py-1" />

@@ -38,7 +38,7 @@ import {
   //   - Leave "" to keep the green gradient panel.
   //   - Set a public path to show a real image, e.g. HERO_IMAGE = "/features/hero.jpg"
   //     (put the file in frontend/public/features/).
-  export const HERO_IMAGE = "";
+  export const HERO_IMAGE = "/features/workforce.png";
   export const ABOUT_IMAGE = "";
   
   // Headline platform modules — matches the Cha Ghor plan / SRS functional reqs.

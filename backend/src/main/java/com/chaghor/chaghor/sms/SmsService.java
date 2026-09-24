@@ -40,6 +40,8 @@ public class SmsService {
     private final com.chaghor.chaghor.user.UserRepository userRepository;
     // Needed to turn a broadcast's field NAME into the zone id workers carry.
     private final ZoneRepository zoneRepository;
+    // The SMS master switch and the auto-notify switch live on app_setting (V43).
+    private final com.chaghor.chaghor.settings.AppSettingRepository appSettingRepository;
 
     // EXPLICIT CONSTRUCTOR, no Lombok on this class. So a new final field is
     // two edits, not one: the declaration AND a parameter plus assignment here.
@@ -49,12 +51,52 @@ public class SmsService {
     public SmsService(SmsSender sender, SmsLogRepository logRepo,
                       WorkerRepository workerRepository,
                       com.chaghor.chaghor.user.UserRepository userRepository,
-                      ZoneRepository zoneRepository) {
+                      ZoneRepository zoneRepository,
+                      com.chaghor.chaghor.settings.AppSettingRepository appSettingRepository) {
         this.sender = sender;
         this.logRepo = logRepo;
         this.workerRepository = workerRepository;
         this.userRepository = userRepository;
         this.zoneRepository = zoneRepository;
+        this.appSettingRepository = appSettingRepository;
+    }
+
+    // ---- the switches (V43) -------------------------------------------------
+
+    // Master switch. FALSE means nothing leaves the building, by any path.
+    //
+    // Fails CLOSED. If the settings row cannot be read for any reason, the
+    // answer is "do not send" -- the failure mode of a wrong `false` is a
+    // message that did not go out, and of a wrong `true` is money spent on
+    // texts nobody authorised. Those are not equally bad.
+    public boolean smsEnabled() {
+        try {
+            return appSettingRepository.findById(1L)
+                    .map(com.chaghor.chaghor.settings.AppSetting::isSmsEnabled)
+                    .orElse(false);
+        } catch (Exception e) {
+            log.warn("[sms] could not read the master switch, refusing to send: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // Whether the two AUTOMATIC notices (payroll closed, withdrawal decided)
+    // may fire. Requires the master switch as well -- this one only narrows.
+    public boolean autoNotifyEnabled() {
+        try {
+            return smsEnabled() && appSettingRepository.findById(1L)
+                    .map(com.chaghor.chaghor.settings.AppSetting::isSmsAutoNotify)
+                    .orElse(false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Which transport is configured, for the admin console to display. Knowing
+    // it says "macmessages" rather than "mock" is the difference between a
+    // demo and a phone bill.
+    public String providerName() {
+        return sender.providerName();
     }
 
     // Fired by PayrollService.markPaid(...) once a payslip goes approved -> paid.
@@ -81,10 +123,25 @@ public class SmsService {
     // Fired by WithdrawalService.decide(...) once a request goes pending -> paid/rejected.
     // `statusLabel` is the withdrawal status name ("paid" | "rejected").
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    // IN BANGLA, for the same reason notifyPayrollClosed is.
+    //
+    // This message used to be the only English one the estate sent. Every other
+    // worker-facing word in the system -- the console, the payroll SMS, the
+    // registration form -- is Bangla, and the one message about money arriving
+    // was the one a worker could not read. Amount stays in Western digits so it
+    // can be compared at a glance against the bKash confirmation, which uses
+    // them.
+    //
+    // PAID SAYS THE MONEY HAS ARRIVED, because by the time this fires it has:
+    // sendBatch debits the wallet and posts to Finance in the same transaction.
+    // Compare notifyPayrollClosed, which deliberately does NOT say "paid" --
+    // that one only finalises a statement.
     public void notifyWithdrawalStatus(Long workerId, BigDecimal amount, String statusLabel) {
         boolean paid = "paid".equalsIgnoreCase(statusLabel);
-        String outcome = paid ? "approved and paid" : "rejected";
-        String msg = "Cha Ghor: Your bKash withdrawal of BDT " + money(amount) + " was " + outcome + ".";
+        String msg = paid
+                ? "চা ঘর: আপনার বিকাশ নম্বরে " + money(amount) + " টাকা পাঠানো হয়েছে। ধন্যবাদ।"
+                : "চা ঘর: আপনার " + money(amount) + " টাকা তোলার অনুরোধটি অনুমোদন করা হয়নি। "
+                  + "বিস্তারিত জানতে অফিসে যোগাযোগ করুন।";
         dispatch(workerId, msg, SmsCategory.withdrawal);
     }
 
@@ -147,12 +204,23 @@ public class SmsService {
         int sent = 0;
         int failed = 0;
 
+        // The master switch applies to broadcasts too. This path already has a
+        // confirm screen, so it is the SAFE one -- but "safe" is not "free", and
+        // a broadcast is the single most expensive action in the system: one tap
+        // multiplied by every worker in a field. If the estate has switched SMS
+        // off, off means off.
+        final boolean armed = smsEnabled();
+
         for (Worker w : recipients) {
             SmsSendResult result;
-            try {
-                result = sender.send(w.getPhone(), message);
-            } catch (Exception e) {
-                result = SmsSendResult.failed(e.getMessage());
+            if (!armed) {
+                result = SmsSendResult.mock("SMS sending is switched off");
+            } else {
+                try {
+                    result = sender.send(w.getPhone(), message);
+                } catch (Exception e) {
+                    result = SmsSendResult.failed(e.getMessage());
+                }
             }
             // One log row per recipient, whatever happened. A failure that
             // leaves no trace is indistinguishable from a message nobody sent.
@@ -174,6 +242,13 @@ public class SmsService {
         out.put("sent", sent);
         out.put("failed", failed);
         out.put("provider", sender.providerName());
+        // So the supervisor's success screen cannot claim delivery that the
+        // master switch prevented. Without this the UI would say "sent to 12
+        // workers" when twelve rows were logged and nothing left the building.
+        out.put("armed", armed);
+        if (!armed) {
+            out.put("note", "SMS is switched off in Settings — recorded but not sent.");
+        }
         return out;
     }
 
@@ -222,9 +297,36 @@ public class SmsService {
                     ? null
                     : workerRepository.findById(workerId).map(Worker::getPhone).orElse(null);
 
-            SmsSendResult result = (phone == null || phone.isBlank())
-                    ? SmsSendResult.failed("no phone on file")
-                    : sender.send(phone, message);
+            // ================================================================
+            // THE GATE. Both automatic notices come through here.
+            // ================================================================
+            //
+            // payroll and withdrawal are the two categories that fire with NO
+            // human confirmation -- closing a payslip or deciding a withdrawal
+            // texts the worker on its own. With a real SIM behind the sender,
+            // marking a cycle of 50 payslips paid would be 50 messages from one
+            // button press. They now need autoNotifyEnabled(), which needs the
+            // master switch too, and both default to false.
+            //
+            // The row is STILL WRITTEN, with status mock. A blocked message that
+            // leaves no trace would make the delivery log lie about what the
+            // system decided to do.
+            boolean automatic = category == SmsCategory.payroll
+                    || category == SmsCategory.withdrawal
+                    || category == SmsCategory.loan;
+            boolean allowed = automatic ? autoNotifyEnabled() : smsEnabled();
+
+            SmsSendResult result;
+            if (!allowed) {
+                log.info("[sms] not sent ({}), switch is off: workerId={}", category, workerId);
+                result = SmsSendResult.mock(automatic
+                        ? "automatic notices are switched off"
+                        : "SMS sending is switched off");
+            } else {
+                result = (phone == null || phone.isBlank())
+                        ? SmsSendResult.failed("no phone on file")
+                        : sender.send(phone, message);
+            }
 
             SmsLog row = SmsLog.builder()
                     .workerId(workerId)

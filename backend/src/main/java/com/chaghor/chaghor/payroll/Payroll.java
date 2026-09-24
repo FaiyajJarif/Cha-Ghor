@@ -62,6 +62,15 @@ public class Payroll {
     @Builder.Default
     private BigDecimal advanceRecovery = BigDecimal.ZERO;
 
+    // Repaying wages overpaid on a day corrected after settlement.
+    //
+    // Derived from SUM(daily_settlement.to_overdraw), like loanDeduction and
+    // advanceRecovery. Missing this column is why net_payable was overstated by
+    // exactly the overdraw whenever a correction had occurred -- see V39.
+    @Column(name = "overdraw_recovery", nullable = false)
+    @Builder.Default
+    private BigDecimal overdrawRecovery = BigDecimal.ZERO;
+
     @Column(name = "other_deduction", nullable = false)
     @Builder.Default
     private BigDecimal otherDeduction = BigDecimal.ZERO;

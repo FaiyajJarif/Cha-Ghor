@@ -18,7 +18,7 @@ import { apiError } from "../../lib/apiError";
 // Newest day first: the worker opened this to ask about today, not about the
 // 1st of the month.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -94,6 +94,7 @@ export default function DailyLedger({ limit = 10 }) {
             const Icon = st?.icon;
             const toLoan = Number(d.toLoan || 0);
             const toAdv = Number(d.toAdvance || 0);
+            const toOver = Number(d.toOverdraw || 0);
             const payable = Number(d.payable || 0);
             const earned = Number(d.earned || 0);
             // SETTLED MEANS THE MONEY ACTUALLY MOVED. An unsettled day is
@@ -150,7 +151,7 @@ export default function DailyLedger({ limit = 10 }) {
                     the past tense once sent the office hunting for a repayment
                     that was never going to be there, and the future tense now
                     would tell a worker his loan is untouched when it is not. */}
-                {(toLoan > 0 || toAdv > 0) && (
+                {(toLoan > 0 || toAdv > 0 || toOver > 0) && (
                   <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 rounded-lg bg-[#F4FFE9] px-2.5 py-1.5 text-[11px] text-[#14493B]/70">
                     {toAdv > 0 && (
                       <span>
@@ -160,6 +161,15 @@ export default function DailyLedger({ limit = 10 }) {
                     {toLoan > 0 && (
                       <span>
                         ঋণ {taka(toLoan)} {settled ? "কাটা হয়েছে" : "কাটা হবে"}
+                      </span>
+                    )}
+                    {/* THE WORKER MUST BE TOLD WHY, or a smaller day looks like
+                        the estate simply took money. This says which day was
+                        corrected and that it is being worked off, not seized. */}
+                    {toOver > 0 && (
+                      <span>
+                        আগের বেশি দেওয়া {taka(toOver)}{" "}
+                        {settled ? "ফেরত নেওয়া হয়েছে" : "ফেরত নেওয়া হবে"}
                       </span>
                     )}
                   </p>
@@ -180,6 +190,18 @@ export default function DailyLedger({ limit = 10 }) {
             );
           })}
         </ul>
+      )}
+
+      {/* A STANDING EXPLANATION, not just a per-day line.
+          A worker whose days keep paying less needs to see the reason once, in
+          one place, with the amount left. Without it a correction is
+          indistinguishable from the estate quietly underpaying them. */}
+      {Number(data?.overdrawLeft) > 0 && (
+        <p className="mx-5 mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+          আগের একটি দিনের হিসাব ঠিক করা হয়েছে, তাই সেই দিনের বেশি দেওয়া টাকা
+          অল্প অল্প করে ফেরত নেওয়া হচ্ছে। এখনো {taka(data.overdrawLeft)} বাকি।
+          শোধ হয়ে গেলে আবার পুরো টাকা পাবেন।
+        </p>
       )}
 
       {data && (

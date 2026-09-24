@@ -29,11 +29,14 @@ import Overview from "./pages/admin/Overview";
 import Workforce from "./pages/admin/Workforce";
 import Payroll from "./pages/admin/Payroll";
 import Finance from "./pages/admin/Finance";
-import Inventory from "./pages/admin/Inventory";
 import Loans from "./pages/admin/Loans";
+// Inventory and Supply Chain are out of scope for this build. Their page files
+// are still present and still compile; only the ROUTES point elsewhere. See
+// `soon: true` in lib/adminNav.js, which is what the nav reads.
+import ComingSoon from "./pages/admin/ComingSoon";
+import BkashPayout from "./pages/admin/BkashPayout";
 import Reports from "./pages/admin/Reports";
 import Complaints from "./pages/admin/Complaints";
-import Supply from "./pages/admin/Supply";
 import Settings from "./pages/admin/Settings";
 
 export default function App() {
@@ -76,11 +79,14 @@ export default function App() {
           <Route path="workforce" element={<Workforce />} />
           <Route path="payroll" element={<Payroll />} />
           <Route path="finance" element={<Finance />} />
-          <Route path="inventory" element={<Inventory />} />
+          {/* Out of scope. Routed rather than removed so a bookmark or the
+              back button lands on an explanation instead of a blank frame. */}
+          <Route path="inventory" element={<ComingSoon />} />
           <Route path="loans" element={<Loans />} />
+          <Route path="bkash" element={<BkashPayout />} />
           <Route path="reports" element={<Reports />} />
           <Route path="complaints" element={<Complaints />} />
-          <Route path="supply" element={<Supply />} />
+          <Route path="supply" element={<ComingSoon />} />
           <Route path="settings" element={<Settings />} />
         </Route>
 

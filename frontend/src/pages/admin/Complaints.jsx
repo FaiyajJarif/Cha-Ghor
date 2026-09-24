@@ -50,16 +50,21 @@ function fmt(iso) {
 
 function StatCard({ icon: Icon, label, value, hint }) {
   return (
-    <div className="rounded-2xl border border-cg-lime/60 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-cg-dark/60">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, so
+    // a long status word kept the KPI grid wider than the phone screen.
+    <div className="min-w-0 rounded-2xl border border-cg-lime/60 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-dark/60">
           {label}
         </p>
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-cg-lime text-cg-green">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-cg-lime text-cg-green">
           <Icon size={16} />
         </span>
       </div>
-      <p className="mt-2 text-2xl font-bold capitalize text-cg-darker">
+      <p
+        className="mt-2 truncate text-xl font-bold capitalize tabular-nums text-cg-darker sm:text-2xl"
+        title={typeof value === "string" ? value : undefined}
+      >
         {value}
       </p>
       {hint ? <p className="mt-1 text-xs text-cg-dark/50">{hint}</p> : null}

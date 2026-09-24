@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright demonstration suite (demo/). Artefacts only — the specs are tracked.
+# demo/.auth holds real JWTs for the seeded accounts; it must never be committed.
+demo/.auth/
+demo-report/
+test-results/
+playwright-report/
+blob-report/

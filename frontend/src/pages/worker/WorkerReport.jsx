@@ -37,7 +37,7 @@ import VoiceNote from "../../components/worker/VoiceNote";
 //   3. STATUS IS VISIBLE. "Did anyone read it" is the only question a worker
 //      has after filing, and silence is what makes people stop bothering.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -81,8 +81,14 @@ const CATEGORIES = [
 function Kpi({ label, value, tone }) {
   return (
     <div className={`${CARD} p-4`}>
-      <p className="text-[11px] font-semibold text-[#14493B]/50">{label}</p>
-      <p className={`mt-1 text-2xl font-extrabold ${tone || "text-[#14493B]"}`}>
+      {/* min-w-0 comes from CARD. truncate + tabular-nums here because Bangla
+          numerals are what this renders and a four-figure count has no break
+          opportunity -- it would set this card's min-content width and keep the
+          two-up grid wider than a 360px screen. */}
+      <p className="truncate text-[11px] font-semibold text-[#14493B]/50">{label}</p>
+      <p
+        className={`mt-1 truncate text-2xl font-extrabold tabular-nums ${tone || "text-[#14493B]"}`}
+      >
         {bn(value ?? 0)}
       </p>
     </div>
@@ -316,7 +322,7 @@ export default function WorkerReport() {
         </p>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
         <Kpi label="মোট অভিযোগ" value={data?.total} />
         <Kpi label="সমাধান হয়েছে" value={data?.resolved} tone="text-emerald-700" />
         <Kpi label="তদন্ত চলছে" value={data?.investigating} tone="text-amber-700" />

@@ -1,9 +1,11 @@
 package com.chaghor.chaghor.settlement;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.Map;
 
 // Runs settlement, and lets an admin run it on demand.
@@ -43,6 +45,41 @@ public class SettlementController {
     @PreAuthorize("hasRole('ADMIN')")
     public Map<String, Object> run() {
         return service.settleAll();
+    }
+
+    // CLOSE TODAY EARLY, then settle it.
+    //
+    // Same work as /run, but it includes today instead of stopping at
+    // yesterday. The office is declaring that the weighing is finished.
+    //
+    // This does NOT disable the 00:30 job, and it does not need to: the day is
+    // now recorded, and daily_settlement is UNIQUE on (worker_id, work_date),
+    // so tonight simply finds nothing left to do. Anything weighed in after the
+    // close is picked up by SettlementRevisionService, which reverses the day
+    // and re-settles it at the corrected figure.
+    //
+    // ADMIN ONLY -- deciding a day is over is an office decision, not a field
+    // one. /run stays open to supervisors; this does not.
+    @PostMapping("/close-today")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> closeToday() {
+        return service.settleAll(true);
+    }
+
+    // THE DAY SHEET. Every worker's daily payslip for one date.
+    //
+    // Read-only and derived entirely from settlement rows, so a supervisor may
+    // see it: it shows nothing they did not themselves record.
+    //
+    // `date` omitted defaults to yesterday -- the most recent day that is
+    // certain to be closed. Defaulting to today would usually return an empty
+    // sheet and read as a bug.
+    @GetMapping("/day-sheet")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public Map<String, Object> daySheet(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return service.daySheet(date);
     }
 
     // How far behind settlement is. Read-only, safe for any office user.

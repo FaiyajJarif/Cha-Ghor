@@ -123,6 +123,16 @@ public class MeWorkerController {
         return service.notices();
     }
 
+    // The worker's own payment messages — "your money has arrived".
+    //
+    // Read-only, and scoped to the signed-in worker inside the service by
+    // resolving the JWT to a worker record. No id is accepted from the client,
+    // so there is no parameter to tamper with in order to read somebody else's.
+    @GetMapping("/payments")
+    public java.util.List<Map<String, Object>> payments() {
+        return service.payments();
+    }
+
     // ---- complaints ---------------------------------------------------------
 
     // The worker's own cases and the four counts above them.

@@ -22,7 +22,7 @@ import { apiError } from "../../lib/apiError";
 // What replaced them is real: attendance status with lateness, kilos against
 // the configured quota, and the assigned field.
 
-const CARD = "rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
+const CARD = "min-w-0 rounded-2xl bg-white shadow ring-1 ring-[#13483B]/10";
 
 const BN = "০১২৩৪৫৬৭৮৯";
 const bn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -180,7 +180,7 @@ export default function WorkerProfile() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold text-[#14493B]">স্বাগতম, {name}</h1>
+        <h1 className="text-2xl font-extrabold text-[#14493B] sm:text-3xl">স্বাগতম, {name}</h1>
         <p className="text-sm text-[#14493B]/60">
           এখানে আপনার তথ্য ও আজকের কাজের সারসংক্ষেপ দেওয়া হলো
         </p>
@@ -192,7 +192,10 @@ export default function WorkerProfile() {
           <div className="bg-[#C0F28B] px-5 py-3">
             <h2 className="font-bold text-[#14493B]">ব্যক্তিগত তথ্য</h2>
           </div>
-          <div className="flex flex-wrap gap-6 p-5">
+          {/* gap-6 + p-5 is 64px of a 328px card spent on space before the
+              112px avatar and the field grid have any. They wrap on a phone
+              rather than sitting side by side, so the gap buys nothing there. */}
+          <div className="flex flex-wrap gap-4 p-4 sm:gap-6 sm:p-5">
             <div className="text-center">
               {/* Was a bare <img src>, which would have 401'd the moment a
                   photo actually existed: attachments are authenticated and an
@@ -208,7 +211,7 @@ export default function WorkerProfile() {
               <p className="text-xs text-[#14493B]/55">কর্মী আইডি: {me?.code}</p>
             </div>
 
-            <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-4">
+            <div className="grid min-w-0 flex-1 grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
               <Field label="পূর্ণ নাম" value={me?.fullName} />
               <Field label="কর্মীর ধরন" value={ROLE_BN[me?.jobRole] || me?.jobRole} />
               <Field label="লিঙ্গ" value={GENDER_BN[me?.gender]} />
@@ -260,7 +263,7 @@ export default function WorkerProfile() {
               {MONTHS_BN[new Date().getMonth()]}
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 sm:gap-4 sm:p-5">
             <div>
               <p className="text-[11px] font-semibold text-[#14493B]/50">কাজ করেছেন</p>
               <p className="text-2xl font-extrabold text-[#14493B]">

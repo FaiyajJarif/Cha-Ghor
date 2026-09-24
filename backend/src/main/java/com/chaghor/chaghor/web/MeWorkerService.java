@@ -68,6 +68,7 @@ public class MeWorkerService {
     private final com.chaghor.chaghor.payroll.PayrollConfigRepository payrollConfigRepository;
     private final com.chaghor.chaghor.withdrawal.WithdrawalRepository withdrawalRepository;
     private final FieldCaseRepository caseRepository;
+    private final com.chaghor.chaghor.sms.SmsLogRepository smsLogRepository;
     private final com.chaghor.chaghor.fieldcase.CaseReplyRepository caseReplyRepository;
     private final com.chaghor.chaghor.fieldcase.CaseAttachmentService attachments;
 
@@ -240,7 +241,8 @@ public class MeWorkerService {
                 nz(kg), nz(gradeAKg),
                 nz(p.getBaseAmount()), nz(p.getSurplusAmount()), nz(p.getGradeBonus()),
                 nz(p.getGrossAmount()),
-                nz(p.getLoanDeduction()), nz(p.getAdvanceRecovery()), nz(p.getOtherDeduction()),
+                nz(p.getLoanDeduction()), nz(p.getAdvanceRecovery()),
+                nz(p.getOverdrawRecovery()), nz(p.getOtherDeduction()),
                 nz(p.getNetPayable()),
                 p.getPaidAt() == null ? null : p.getPaidAt().toLocalDate().toString());
     }
@@ -297,6 +299,12 @@ public class MeWorkerService {
                 fmtTk(prev.loanDeduction()), fmtTk(cur.loanDeduction()));
         addPart(parts, "advanceRecovery", prev.advanceRecovery().subtract(cur.advanceRecovery()),
                 fmtTk(prev.advanceRecovery()), fmtTk(cur.advanceRecovery()));
+        // The fourth deduction. Left out, a pay drop caused by repaying an
+        // overpaid day would appear in the total with NO line explaining it --
+        // which is precisely the "why is my pay less" question this whole
+        // screen was built to answer.
+        addPart(parts, "overdrawRecovery", prev.overdrawRecovery().subtract(cur.overdrawRecovery()),
+                fmtTk(prev.overdrawRecovery()), fmtTk(cur.overdrawRecovery()));
         addPart(parts, "otherDeduction", prev.otherDeduction().subtract(cur.otherDeduction()),
                 fmtTk(prev.otherDeduction()), fmtTk(cur.otherDeduction()));
 
@@ -362,6 +370,7 @@ public class MeWorkerService {
     private static BigDecimal shortfall(MyWages.Period p) {
         BigDecimal deductions = nz(p.loanDeduction())
                 .add(nz(p.advanceRecovery()))
+                .add(nz(p.overdrawRecovery()))
                 .add(nz(p.otherDeduction()));
         BigDecimal over = deductions.subtract(nz(p.gross()));
         return over.signum() > 0 ? over : BigDecimal.ZERO;
@@ -580,6 +589,52 @@ public class MeWorkerService {
                     // put "your field" notices first.
                     m.put("mine", c.getZone() != null
                             && c.getZone().equalsIgnoreCase(zoneName(w.getZoneId())));
+                    return m;
+                })
+                .toList();
+    }
+
+    // ---- payment notifications ----------------------------------------------
+
+    // "Your money has arrived" — the worker's own messages from the estate.
+    //
+    // ========================================================================
+    // THIS READS THE SMS LOG. IT DOES NOT SEND ANYTHING.
+    // ========================================================================
+    //
+    // Every row here is a message the estate already dispatched, so the
+    // notification in the app and the text on the handset are the same record
+    // and cannot drift apart. It also means this screen is useful precisely
+    // when SMS is off: app_setting.sms_enabled (V43) defaults to false and a
+    // dispatch with the transport disabled still writes a log row with status
+    // `mock`. The worker sees that he was paid even though no text left the
+    // building — which is the common case on a demo estate, and the case where
+    // a worker would otherwise be told nothing at all.
+    //
+    // WHY IT IS SCOPED TO THE WORKER AND NOT FILTERED BY CATEGORY: sms_log rows
+    // carry worker_id, so findTop20ByWorkerId returns only this worker's own
+    // messages — a broadcast that went to the whole estate still arrives here
+    // as that worker's copy of it. There is no path by which one worker sees
+    // another worker's message, and that property comes from the query rather
+    // than from remembering to filter.
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> payments() {
+        Worker w = me();
+
+        return smsLogRepository.findTop20ByWorkerIdOrderBySentAtDesc(w.getId())
+                .stream()
+                .map(s -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", s.getId());
+                    m.put("message", s.getMessage());
+                    m.put("category", s.getCategory() == null ? null : s.getCategory().name());
+                    m.put("sentAt", s.getSentAt());
+                    // `mock` means it was recorded but not transmitted, because
+                    // the estate has SMS switched off. Surfaced rather than
+                    // hidden: a worker told "we texted you" who never got a text
+                    // stops believing the next message too.
+                    m.put("delivered", s.getStatus() != null
+                            && "sent".equalsIgnoreCase(s.getStatus().name()));
                     return m;
                 })
                 .toList();

@@ -175,7 +175,12 @@ export default function Login() {
               <>
                 <label className="block">
                   <span className={labelCls}>{t.username}</span>
+                  {/* data-testid: the Selenium suite selects on these. They are
+                      invisible to users and must not be renamed without
+                      updating backend/src/test/.../selenium. Tailwind classes
+                      are NOT usable as selectors -- they change with styling. */}
                   <input
+                    data-testid="login-username"
                     className={`${inputCls} mt-1`}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
@@ -187,6 +192,7 @@ export default function Login() {
                   <span className={labelCls}>{t.password}</span>
                   <div className="relative mt-1">
                     <input
+                      data-testid="login-password"
                       type={show ? "text" : "password"}
                       className={inputCls}
                       value={password}
@@ -207,12 +213,16 @@ export default function Login() {
             )}
 
             {error && (
-              <p className="rounded-lg bg-red-500/15 px-4 py-3 text-sm text-red-200 ring-1 ring-red-400/30">
+              <p
+                data-testid="login-error"
+                className="rounded-lg bg-red-500/15 px-4 py-3 text-sm text-red-200 ring-1 ring-red-400/30"
+              >
                 {error}
               </p>
             )}
 
             <button
+              data-testid="login-submit"
               type="submit"
               disabled={loading}
               className="w-full rounded-lg bg-cg-bright py-3 text-sm font-bold text-[#16281c] transition hover:brightness-110 disabled:opacity-60"

@@ -95,7 +95,11 @@ public class FinanceService {
 
     public LedgerPageResponse ledger(int page, int size, String category, String status, String q) {
         int p = Math.max(page, 0);
-        int s = size <= 0 ? 10 : Math.min(size, 10000);
+        // 200, not 10000. The old ceiling let one authenticated caller pull ten
+        // thousand ledger rows per request in a loop and exhaust the connection
+        // pool; every other list endpoint in the codebase caps at 100-200.
+        // Nothing in the UI asks for more than a page of 25.
+        int s = size <= 0 ? 10 : Math.min(size, 200);
         Page<FinanceEntry> result = repo.search(
                 blank(category), blank(status), blank(q), PageRequest.of(p, s));
         List<LedgerEntryResponse> entries = result.getContent().stream()
@@ -154,6 +158,38 @@ public class FinanceService {
     // Categorised as PAYROLL because a withdrawal is an advance against wages;
     // the matching advance_recovery on the worker's next payslip keeps the two
     // from double-counting. Idempotent on (withdrawal, id).
+    // Cash moved from the office into the estate's OWN bKash wallet (V44).
+    //
+    // A TRANSFER, NOT A COST. Cash on Hand is defined as office cash PLUS the
+    // wallet, so this row is deliberately cash-NEUTRAL: FinanceRepository.summary
+    // has an arm returning 0 for source_type = 'bkash_topup'. The row exists
+    // because §1 says if a taka moves there must be a row for it, and because a
+    // reconciliation needs to see when the wallet was funded.
+    //
+    // Category LOAN, which is the ledger's existing "moves money but is not a
+    // cost" bucket -- it is excluded from revenue and expense totals. Using
+    // EXPENSE here would overstate the estate's costs by every top-up.
+    //
+    // Idempotent on (bkash_topup, id) like every other posting.
+    public void postBkashTopUp(Long topUpId, BigDecimal amount, LocalDate date) {
+        if (topUpId != null && repo.existsBySourceTypeAndSourceId("bkash_topup", topUpId)) {
+            return;
+        }
+        FinanceEntry e = FinanceEntry.builder()
+                .entryDate(date == null ? LocalDate.now() : date)
+                .refId(topUpId == null ? null : "BK-" + topUpId)
+                .category(LedgerCategory.LOAN)
+                .account("bKash disbursement wallet")
+                .amount(nz(amount))
+                .status(LedgerStatus.SETTLED)
+                .note("Transfer to the estate's bKash wallet — not a cost; "
+                        + "cash leaves when a worker is paid")
+                .sourceType("bkash_topup")
+                .sourceId(topUpId)
+                .build();
+        repo.save(e);
+    }
+
     public void postWithdrawal(Long withdrawalId, String account, BigDecimal amount, LocalDate date) {
         if (withdrawalId != null && repo.existsBySourceTypeAndSourceId("withdrawal", withdrawalId)) {
             return;
@@ -240,6 +276,73 @@ public class FinanceService {
                 result.getTotalElements(), result.getTotalPages(),
                 totals == null ? BigDecimal.ZERO : nz(totals.getTotalOut()),
                 totals == null ? BigDecimal.ZERO : nz(totals.getTotalIn()));
+    }
+
+    // An ADVANCE handed to a worker.
+    //
+    // ====================================================================
+    // AN ADVANCE IS NOT AN EXPENSE. IT IS MONEY LENT.
+    // ====================================================================
+    //
+    // This used to post as PAYROLL, identical to a wage payout, which made
+    // totalExpenses -- and therefore netProfit, the profit margin and the
+    // Overview health score -- overstate the estate's cost by every taka of
+    // advance still outstanding. The estate had not spent that money; it had
+    // lent it, against work not yet done, and would get it back by paying
+    // smaller wages later.
+    //
+    // Categorised LOAN for the same reason a loan disbursement is: cash leaves
+    // (so cashOnHand drops) but it is not a cost (so it stays out of the
+    // revenue/expense totals). The wage expense is recognised later, as the
+    // advance is actually worked off -- see postAdvanceRecovery.
+    //
+    // Idempotent on (advance_out, withdrawalId).
+    public void postAdvance(Long withdrawalId, String account, BigDecimal amount, LocalDate date) {
+        if (withdrawalId != null && repo.existsBySourceTypeAndSourceId("advance_out", withdrawalId)) {
+            return;
+        }
+        FinanceEntry e = FinanceEntry.builder()
+                .entryDate(date == null ? LocalDate.now() : date)
+                .refId(withdrawalId == null ? null : "ADV-" + withdrawalId)
+                .category(LedgerCategory.LOAN)
+                .account(account == null || account.isBlank() ? "Worker advance" : account.trim())
+                .amount(nz(amount))
+                .status(LedgerStatus.SETTLED)
+                .note("Advance against future wages (bKash)")
+                .sourceType("advance_out")
+                .sourceId(withdrawalId)
+                .build();
+        repo.save(e);
+    }
+
+    // The wage expense finally being recognised, as an advance is worked off.
+    //
+    // CASH-NEUTRAL, and that is the whole point. No money moves here: the estate
+    // simply pays the worker less on the day. The cash already left when the
+    // advance was handed over. Counting it again would double the outflow.
+    //
+    // But it IS a cost, recognised now rather than at payout, so that total
+    // wage expense over the life of an advance comes to exactly the amount
+    // advanced -- no more, no less.
+    //
+    // Idempotent on (advance_in, settlementId).
+    public void postAdvanceRecovery(Long settlementId, String account,
+                                    BigDecimal amount, LocalDate date) {
+        if (settlementId != null && repo.existsBySourceTypeAndSourceId("advance_in", settlementId)) {
+            return;
+        }
+        FinanceEntry e = FinanceEntry.builder()
+                .entryDate(date == null ? LocalDate.now() : date)
+                .refId(settlementId == null ? null : "ADVR-" + settlementId)
+                .category(LedgerCategory.PAYROLL)
+                .account(account == null || account.isBlank() ? "Advance recovered" : account.trim())
+                .amount(nz(amount))
+                .status(LedgerStatus.SETTLED)
+                .note("Wages withheld against an earlier advance")
+                .sourceType("advance_in")
+                .sourceId(settlementId)
+                .build();
+        repo.save(e);
     }
 
     // Undo a loan repayment that was recorded and then found not to have

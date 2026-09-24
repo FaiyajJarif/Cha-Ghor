@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "demo": "playwright test --headed",
+    "demo:ui": "playwright test --ui",
+    "demo:fast": "playwright test",
+    "demo:report": "playwright show-report demo-report"
   },
   "dependencies": {
     "@google/genai": "^2.15.0",
@@ -22,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.49.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

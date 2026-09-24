@@ -31,6 +31,9 @@ import { BTN_DARK, BTN_GHOST } from "../../lib/ui";
 import { apiError } from "../../lib/apiError";
 import InfoTip from "../../components/admin/InfoTip";
 import ReportDocument from "../../components/admin/ReportDocument";
+import ModelAccuracyPanel from "../../components/admin/ModelAccuracyPanel";
+// One card shape across all three consoles — see RecordCard.
+import RecordCard, { CARD_CHIP } from "../../components/admin/RecordCard";
 import { isoDate } from "../../lib/localDate";
 
 // Estate money is in Bangladeshi Taka (\u09f3).
@@ -81,10 +84,13 @@ function StatCard({ icon: Icon, label, value, sub, tone = "default", info }) {
         ? "text-amber-600"
         : "text-cg-ink";
   return (
-    <div className="rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
+    // min-w-0 + truncate: a grid item's automatic minimum is min-content, and
+    // a taka figure has no break opportunity, so without this the KPI grid
+    // grew wider than the phone and dragged the whole page with it.
+    <div className="min-w-0 rounded-2xl bg-white p-5 shadow ring-1 ring-cg-green/10">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1">
+          <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-cg-ink/50">
             {label}
           </p>
           {info ? <InfoTip text={info} /> : null}
@@ -95,7 +101,12 @@ function StatCard({ icon: Icon, label, value, sub, tone = "default", info }) {
           <Icon size={18} />
         </span>
       </div>
-      <p className={`mt-2 text-2xl font-extrabold ${valueColor}`}>{value}</p>
+      <p
+        className={`mt-2 truncate text-xl font-extrabold tabular-nums sm:text-2xl ${valueColor}`}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </p>
       {sub ? <p className="mt-1 text-xs text-cg-ink/50">{sub}</p> : null}
     </div>
   );
@@ -463,6 +474,12 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* How the vision models are performing. Reports is the right home: this
+          is the page about what the estate can evidence, and the accuracy
+          figures had no home at all before — GET /leaf/vision/accuracy was the
+          only endpoint in the app nothing called. */}
+      <ModelAccuracyPanel />
+
       {/* Generated reports table */}
       <div className="overflow-hidden rounded-2xl bg-white shadow ring-1 ring-cg-green/10">
         <div className="flex flex-wrap items-center justify-between gap-3 bg-[#C0F28B] px-4 py-3">
@@ -474,7 +491,58 @@ export default function Reports() {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* ============ MOBILE: SAVED REPORTS AS CARDS ============
+            Six columns at min-w-[720px] is two phone screens, and Actions —
+            Export and Finalize, the only reason to open this list — sat past
+            the right edge. */}
+        <ul className="sm:hidden">
+          {loading ? (
+            <li className="px-4 py-10 text-center text-sm text-cg-ink/50">Loading…</li>
+          ) : reports.length === 0 ? (
+            <li className="px-4 py-10 text-center text-sm text-cg-ink/50">
+              No reports yet. {isAdmin ? "Generate one above." : ""}
+            </li>
+          ) : (
+            reports.map((r) => (
+              <RecordCard
+                key={r.id}
+                title={r.title}
+                meta={`${r.periodStart} → ${r.periodEnd}`}
+                pills={<StatusPill status={r.status} />}
+                footer={
+                  <>
+                    <span className={`${CARD_CHIP} bg-cg-lime/40 text-cg-green`}>
+                      rev {taka(r.revenue)}
+                    </span>
+                    <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                      net {taka(r.netProfit)}
+                    </span>
+                    <span className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setExporting({ report: r })}
+                        className="rounded-lg bg-cg-lime/50 px-2 py-1 text-xs font-semibold text-cg-green"
+                      >
+                        Export
+                      </button>
+                      {isAdmin && r.status !== "FINALIZED" ? (
+                        <button
+                          type="button"
+                          onClick={() => finalize(r.id)}
+                          className="rounded-lg px-2 py-1 text-xs font-semibold text-cg-ink/70"
+                        >
+                          Finalize
+                        </button>
+                      ) : null}
+                    </span>
+                  </>
+                }
+              />
+            ))
+          )}
+        </ul>
+
+        <div className="hidden overflow-x-auto sm:block">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-cg-ink/60">
               <tr>

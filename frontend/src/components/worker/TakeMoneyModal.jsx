@@ -83,9 +83,25 @@ export default function TakeMoneyModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
-      <div className="w-full max-w-md overflow-hidden rounded-t-3xl bg-white sm:rounded-3xl">
-        <div className="flex items-center justify-between gap-3 bg-[#C0F28B] px-5 py-3">
+    // ============ THE LAST EDGE-ANCHORED SHEET, AND IT COULD NOT SCROLL ============
+    //
+    // Two separate faults in one line. It was `items-end ... p-0` with only the
+    // top corners rounded, so on a phone it was glued to the bottom edge with
+    // no gutter -- a different kind of object from every other dialog in the
+    // product, which are centred cards with a p-4 gutter.
+    //
+    // Worse, the card had NO max-height and NO scroll region, only
+    // overflow-hidden. This dialog carries a paragraph, a cap line, four quick
+    // amounts, an input, a warning and a submit button; once the error line
+    // appears too, the content ran past the viewport and was simply CLIPPED --
+    // taking "আবেদন পাঠান" with it. A worker could open the screen to draw
+    // their own wages and not be able to reach the button.
+    //
+    // Now the same shell as every other dialog: centred, capped, header and
+    // footer that cannot shrink, middle that scrolls.
+    <div className="fixed inset-0 z-[1210] grid place-items-center bg-black/40 p-4">
+      <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 bg-[#C0F28B] px-4 py-3 sm:px-5">
           <h2 className="flex items-center gap-2 font-extrabold text-[#14493B]">
             {salary ? <LuWallet size={18} /> : <LuHandCoins size={18} />}
             {salary ? "বেতন তুলুন" : "অগ্রিমের আবেদন"}
@@ -100,7 +116,7 @@ export default function TakeMoneyModal({
           </button>
         </div>
 
-        <div className="p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
           <p className="text-sm text-[#14493B]/70">
             {salary
               ? "আপনার জমা টাকা থেকে বিকাশে পাঠানো হবে। এটি আপনার নিজের টাকা।"
@@ -135,6 +151,7 @@ export default function TakeMoneyModal({
           <label className="mt-3 block text-xs font-bold text-[#14493B]/60">
             অন্য পরিমাণ
             <input
+              data-testid="take-money-amount"
               type="number"
               min="0"
               inputMode="numeric"
@@ -165,6 +182,7 @@ export default function TakeMoneyModal({
           )}
 
           <button
+            data-testid="take-money-submit"
             type="button"
             onClick={submit}
             disabled={busy || value <= 0 || over}

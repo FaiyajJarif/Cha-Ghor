@@ -41,6 +41,11 @@ import AssignFieldDialog from "../../components/supervisor/AssignFieldDialog";
 import FieldManagerModal from "../../components/supervisor/FieldManagerModal";
 import FieldAiPanel from "../../components/supervisor/FieldAiPanel";
 import HarvestScheduleDocument from "../../components/supervisor/HarvestScheduleDocument";
+// One card shape across both consoles — see RecordCard.
+import RecordCard, {
+  CARD_PILL,
+  CARD_CHIP,
+} from "../../components/admin/RecordCard";
 import { todayISO } from "../../lib/localDate";
 
 // Field & Zonal Management.
@@ -71,16 +76,16 @@ const SCHED_STATUS = {
 
 function Kpi({ icon: Icon, label, value, unit, sub }) {
   return (
-    <div className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`}>
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-bold uppercase tracking-wide text-cg-ink/50">
+    <div className={`min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs font-bold uppercase tracking-wide text-cg-ink/50">
           {label}
         </p>
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-cg-lime text-cg-green">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cg-lime text-cg-green">
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-2 text-3xl font-extrabold text-cg-ink">
+      <p className="mt-2 truncate text-2xl font-extrabold tabular-nums text-cg-ink sm:text-3xl">
         {value}
         {unit ? (
           <span className="ml-1 text-base font-bold text-cg-ink/40">{unit}</span>
@@ -650,7 +655,7 @@ export default function SupervisorFields() {
       )}
 
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Kpi icon={LuMap} label="Total fields" value={stats.total}
              sub={unplaced > 0 ? `${unplaced} not on the map yet` : "all placed on the map"} />
         <Kpi icon={LuCircleCheck} label="Active" value={stats.active}
@@ -663,7 +668,7 @@ export default function SupervisorFields() {
       </div>
 
       {/* Map */}
-      <div className={`rounded-2xl bg-white p-5 shadow ${CARD_STROKE}`}>
+      <div className={`min-w-0 rounded-2xl bg-white p-4 shadow sm:p-5 ${CARD_STROKE}`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h2 className="font-bold text-cg-ink">Field Map</h2>
@@ -873,7 +878,123 @@ export default function SupervisorFields() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* ============ MOBILE: THE SCHEDULE AS CARDS ============
+                Seven columns at min-w-[760px] is over two phone screens, and
+                Status and Action — the two you came here for — were the ones
+                past the right edge. */}
+            <ul className="sm:hidden">
+              {schedPage.map((s) => (
+                <RecordCard
+                  key={s.id}
+                  title={s.title}
+                  meta={
+                    <>
+                      {s.date
+                        ? new Date(`${s.date}T00:00:00`).toLocaleDateString("en-GB", {
+                            day: "numeric",
+                            month: "short",
+                          })
+                        : "—"}
+                      {" • "}
+                      {s.zoneName}
+                      {" • "}
+                      {s.workerName || "nobody assigned"}
+                    </>
+                  }
+                  pills={
+                    <>
+                      <span
+                        className={`${CARD_PILL} uppercase ${
+                          SCHED_STATUS[s.status] || SCHED_STATUS.planned
+                        }`}
+                      >
+                        {s.status}
+                      </span>
+                      {/* Overdue is computed on the server: the day has passed
+                          and the work is still only planned. */}
+                      {s.overdue && (
+                        <span
+                          className={`${CARD_PILL} bg-rose-100 uppercase text-rose-700`}
+                        >
+                          overdue
+                        </span>
+                      )}
+                    </>
+                  }
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-cg-lime/40 capitalize text-cg-green`}>
+                        {s.type}
+                      </span>
+                      {s.expectedKg ? (
+                        <span className={`${CARD_CHIP} bg-cg-lime/40 text-cg-ink`}>
+                          {Number(s.expectedKg).toFixed(0)} kg expected
+                        </span>
+                      ) : null}
+
+                      {/* Saved on this device only. Marking it is what makes
+                          the disabled actions beside it make sense. */}
+                      {(s.pending || s.pendingEdit) && (
+                        <span
+                          title="Saved on this device. It will sync by itself when you are back in signal."
+                          className="flex items-center gap-1 text-[10px] font-bold uppercase text-amber-700"
+                        >
+                          <LuCloudOff size={11} /> not synced
+                        </span>
+                      )}
+
+                      {/* The SAME actions as the desktop row. Dropping them
+                          would leave a supervisor able to see the plan on a
+                          phone but not close anything off on one, which is
+                          exactly the half-built feeling to avoid. */}
+                      <span className="ml-auto flex items-center gap-2">
+                        {s.status !== "done" && s.status !== "cancelled" && (
+                          <button
+                            type="button"
+                            disabled={schedBusy === s.id || !!s.pending}
+                            onClick={() => setSchedStatus(s, "done")}
+                            className="rounded-lg bg-cg-lime/50 px-2 py-1 text-xs font-semibold text-cg-green disabled:opacity-40"
+                          >
+                            Done
+                          </button>
+                        )}
+                        {s.status !== "cancelled" && s.status !== "done" && (
+                          <button
+                            type="button"
+                            disabled={schedBusy === s.id || !!s.pending}
+                            onClick={() => setSchedStatus(s, "cancelled")}
+                            className="rounded-lg px-2 py-1 text-xs font-semibold text-amber-700 disabled:opacity-40"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        {(s.status === "done" || s.status === "cancelled") && (
+                          <button
+                            type="button"
+                            disabled={schedBusy === s.id || !!s.pending}
+                            onClick={() => setSchedStatus(s, "planned")}
+                            className="rounded-lg px-2 py-1 text-xs font-semibold text-sky-700 disabled:opacity-40"
+                          >
+                            Re-open
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={schedBusy === s.id || !!s.pending}
+                          onClick={() => removeSchedule(s)}
+                          title="Entered by mistake — deletes it. Use Cancel for work that was really planned."
+                          className="rounded-lg px-2 py-1 text-xs font-semibold text-rose-600 disabled:opacity-40"
+                        >
+                          Remove
+                        </button>
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                   <tr>
@@ -1038,7 +1159,87 @@ export default function SupervisorFields() {
             No fields to analyse.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* ============ MOBILE: FIELD ANALYSIS AS CARDS ============
+              The condition suggestion has to stay reachable here: it is a
+              server hint that is never applied on its own, and hiding the
+              accept button on a phone would leave it permanently unactionable
+              for a supervisor who only carries one. */}
+          <ul className="sm:hidden">
+            {fields.map((f) => {
+              const target = Number(f.targetKgPerDay || 0);
+              const got = Number(f.yieldKg || 0);
+              const met = target > 0 && got >= target;
+              const cond =
+                f.condition === "poor"
+                  ? "bg-rose-100 text-rose-700"
+                  : f.condition === "caution"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-emerald-100 text-emerald-700";
+              return (
+                <RecordCard
+                  key={f.id}
+                  title={f.name}
+                  meta={
+                    <>
+                      {f.fieldNote ? `${f.fieldNote} • ` : ""}
+                      {f.workersPresent} member{f.workersPresent === 1 ? "" : "s"}
+                    </>
+                  }
+                  pills={
+                    <>
+                      <span className={`${CARD_PILL} uppercase ${cond}`}>
+                        {f.condition}
+                      </span>
+                      {target > 0 && (
+                        <span
+                          className={`${CARD_PILL} uppercase ${
+                            met
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {met ? "met" : "under"}
+                        </span>
+                      )}
+                    </>
+                  }
+                  footer={
+                    <>
+                      <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                        {got.toFixed(0)} kg
+                      </span>
+                      <span className={`${CARD_CHIP} bg-cg-lime/40 text-cg-green`}>
+                        target {target.toFixed(0)} kg
+                      </span>
+                      {/* A SUGGESTION, never applied. The reason is always
+                          shown — a hint you cannot check is just noise. */}
+                      {f.suggestedCondition && (
+                        <span className="w-full">
+                          <span className="block text-[11px] leading-snug text-cg-ink/55">
+                            {f.conditionReason}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={condBusy === f.id}
+                            onClick={() => applyCondition(f)}
+                            title="Records this as the field's condition. You can change it back at any time."
+                            className="mt-1 rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-[#14493B] ring-1 ring-[#13483B]/25 disabled:opacity-40"
+                          >
+                            {condBusy === f.id
+                              ? "Saving…"
+                              : `Mark as ${f.suggestedCondition}`}
+                          </button>
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              );
+            })}
+          </ul>
+
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                 <tr>
@@ -1130,6 +1331,7 @@ export default function SupervisorFields() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 
@@ -1153,7 +1355,46 @@ export default function SupervisorFields() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* MOBILE: the leaderboard as cards. Rank is the point of this
+                list, so it takes the avatar slot — position alone is lost the
+                moment you scroll. */}
+            <ul className="sm:hidden">
+              {pageRows.map((f, i) => {
+                const pct = f.efficiencyPct;
+                const tone =
+                  pct == null
+                    ? "bg-cg-lime text-cg-green"
+                    : pct >= 90
+                      ? "bg-emerald-100 text-emerald-700"
+                      : pct >= 60
+                        ? "bg-sky-100 text-sky-700"
+                        : "bg-rose-100 text-rose-700";
+                return (
+                  <RecordCard
+                    key={f.id}
+                    avatar={
+                      <span className="grid h-9 w-9 place-items-center rounded-full bg-cg-lime text-xs font-extrabold text-cg-green">
+                        {i + 1}
+                      </span>
+                    }
+                    title={f.name}
+                    meta={f.code}
+                    pills={
+                      <span className={`${CARD_PILL} ${tone}`}>
+                        {pct == null ? "—" : `${Math.round(pct)}%`}
+                      </span>
+                    }
+                    footer={
+                      <span className={`${CARD_CHIP} bg-cg-dark text-white`}>
+                        {Number(f.yieldKg || 0).toFixed(0)} kg
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </ul>
+
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[700px] text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-cg-ink/50">
                   <tr>

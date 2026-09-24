@@ -32,3 +32,60 @@ body {
 section[id] {
   scroll-margin-top: 80px;
 }
+/* Hide the scrollbar on horizontal tab/nav strips WITHOUT losing the scroll.
+   overflow-x-auto is what makes the row swipeable; the bar itself just adds
+   ~15px of height on desktop, which pushes the pills up and makes the strip
+   look misaligned next to everything else on the card.
+
+   The Tailwind config has no plugin for this, and the inline
+   scrollbarWidth/msOverflowStyle properties cover Firefox and old Edge but not
+   WebKit -- which is Safari on the phones this is for. This pseudo-element is
+   the only thing that reaches it. */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* ==========================================================================
+   THE DIALOGS THAT "ZOOM IN AND COVER THE WHOLE SCREEN"
+   ==========================================================================
+
+   This was never a layout bug, which is why three rounds of layout fixes did
+   not touch it.
+
+   iOS Safari AUTOMATICALLY ZOOMS THE PAGE IN whenever you focus an input,
+   select or textarea whose font-size is under 16px. It is a built-in
+   readability behaviour and it cannot be turned off from CSS. Every form
+   control in this app is Tailwind `text-sm` -- 14px -- so tapping the weight
+   box on the weigh-in card, or the message box on the broadcast card, zooms
+   the viewport. The dialog is unchanged, but the VISUAL viewport is now
+   smaller than it, so the card appears to swell and swallow the screen. Safari
+   does not zoom back out when the field is blurred.
+
+   The tell is which card is fine: the month view opened from Attendance --
+   the one that behaves -- contains ZERO inputs. Nothing to focus, nothing to
+   zoom. Every card that misbehaves has inputs. That is the whole difference.
+
+   16px is the documented threshold: at or above it Safari leaves the zoom
+   alone. Applied only below the `sm` breakpoint so desktop keeps the smaller,
+   denser control text the design uses.
+
+   NOT FIXED WITH `maximum-scale=1` ON THE VIEWPORT TAG. That is the usual
+   one-line answer and it works, but it also disables pinch-zoom for everyone,
+   permanently, across the whole app -- including a supervisor trying to read a
+   leaf photo in the sun. Trading an accessibility feature away to avoid a
+   font-size rule is a bad deal. index.html keeps `initial-scale=1.0` with no
+   maximum, so pinch-zoom still works; it just is not triggered involuntarily.
+
+   16px is also below Tailwind's `text-base`, so nothing here changes on a
+   control that is already text-base or larger. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
