@@ -1,0 +1,30 @@
+# CODEOWNERS — who must approve a change before it can merge.
+#
+# Paired with the "Require review from Code Owners" box in the main ruleset,
+# this is the mechanism that means a teammate's approval is NOT enough on its
+# own: the owner listed here has to approve too.
+#
+# Syntax is gitignore-style. LAST matching rule wins, so put the broad rule
+# first and the narrow ones after it.
+
+# Everything, by default.
+*                                   @FaiyajJarif
+
+# ---------------------------------------------------------------------------
+# Money and migrations.
+#
+# These are the files where a mistake is a real-world wage error rather than a
+# broken screen, so they are called out explicitly even though the catch-all
+# above already covers them. Listing them means the diff shows "requires review
+# from @FaiyajJarif" against the exact paths, which makes reviewers slow down.
+# ---------------------------------------------------------------------------
+/backend/src/main/resources/db/migration/   @FaiyajJarif
+/backend/src/main/java/com/chaghor/chaghor/payroll/     @FaiyajJarif
+/backend/src/main/java/com/chaghor/chaghor/finance/     @FaiyajJarif
+/backend/src/main/java/com/chaghor/chaghor/loan/        @FaiyajJarif
+/backend/src/main/java/com/chaghor/chaghor/bkash/       @FaiyajJarif
+/backend/src/main/java/com/chaghor/chaghor/security/    @FaiyajJarif
+
+# Standing instructions and CI config.
+/CLAUDE.md                          @FaiyajJarif
+/.github/                           @FaiyajJarif
