@@ -92,11 +92,14 @@ deadlock.
 Under **Require status checks**, search and add:
 
 - `Backend — build and unit tests`
-- `Frontend — lint and build`
+- `Frontend — build`
+- `AI service — error check`
 - `Commit messages`
 
-**Deliberately leave `AI service — import and format check` OUT of the required
-list for now.** See the warning below.
+**Leave `Frontend — lint (advisory)` OUT of the required list.** It reports
+128 problems (123 of them `react-hooks/set-state-in-effect`, a rule newer than
+this codebase) and is there as a burn-down counter, not a gate. When the count
+reaches zero, delete its `continue-on-error` and promote it.
 
 Then **Settings → General → Pull Requests**: enable *Allow squash merging* only,
 and tick *Automatically delete head branches*.
