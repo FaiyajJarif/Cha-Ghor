@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Cha Ghor — iPhone 16 recording frame</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* ========================================================================
+     RECORDING FRAME — NOT PART OF THE APP.
+
+     Lives in public/, so Vite serves it verbatim and never bundles it. Nothing
+     in src/ imports it and sw.js does not precache it; deleting it changes
+     nothing.
+
+     TURN DEVTOOLS DEVICE MODE OFF (Cmd/Ctrl+Shift+M) BEFORE USING THIS.
+     Device Mode makes the browser viewport 393px wide, and this frame needs
+     ~420px to draw the phone. With both on, the phone is squeezed and scaled
+     to 75% and the hint text wraps out of the page.
+
+     SAFE AREAS, v2.
+     The first version drew the status bar as an overlay across the top of the
+     app, which covered the app's own header -- "Cha Ghor" and the Get Started
+     button sat underneath the clock and the Dynamic Island. A real iPhone in
+     standalone PWA mode has a 59px top inset and a 34px bottom one, and the
+     page is expected to stay out of them. So the app now gets its own region
+     between those two strips instead of sharing them.
+     ======================================================================== */
+
+  :root {
+    --screen-w: 393px;
+    --screen-h: 852px;
+    --inset-top: 56px;            /* status bar strip */
+    --inset-bottom: 34px;         /* home indicator strip */
+    --bezel: 11px;
+    --radius-screen: 46px;
+    --radius-device: 57px;
+    --chrome: #F4FFE9;            /* strip colour - cg-pale, matches the app */
+    --chrome-ink: #14493B;
+    --backdrop: #11201a;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--backdrop);
+    display: grid;
+    place-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ---------------------------------------------------------------- device */
+  .device {
+    position: relative;
+    width: calc(var(--screen-w) + var(--bezel) * 2);
+    height: calc(var(--screen-h) + var(--bezel) * 2);
+    background: #1c1c1e;
+    border-radius: var(--radius-device);
+    padding: var(--bezel);
+    box-shadow:
+      0 0 0 2px #6e6e73,
+      0 0 0 4px #3a3a3c,
+      0 30px 70px rgba(0, 0, 0, .55);
+  }
+
+  /* Side buttons. Decoration only - deliberately not clickable. */
+  .btn {
+    position: absolute;
+    background: linear-gradient(180deg, #86868b, #55555a);
+    border-radius: 3px;
+  }
+  .btn-action { left: -5px;  top: 116px; width: 5px; height: 32px; }
+  .btn-up     { left: -5px;  top: 176px; width: 5px; height: 62px; }
+  .btn-down   { left: -5px;  top: 252px; width: 5px; height: 62px; }
+  .btn-power  { right: -5px; top: 200px; width: 5px; height: 96px; }
+
+  /* ---------------------------------------------------------------- screen */
+  .screen {
+    position: relative;
+    width: var(--screen-w);
+    height: var(--screen-h);
+    border-radius: var(--radius-screen);
+    overflow: hidden;
+    background: var(--chrome);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* -------------------------------------------------------- status strip */
+  /* A real strip the app sits BELOW, not an overlay across it. */
+  .status {
+    flex: 0 0 var(--inset-top);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 30px 0;
+    background: var(--chrome);
+    color: var(--chrome-ink);
+    font-size: 15px;
+    font-weight: 600;
+    user-select: none;
+  }
+  .status .icons { display: flex; align-items: center; gap: 5px; }
+
+  /* Dark strips, for the Bangla worker console and other dark screens. */
+  body.dark-chrome { --chrome: #14493B; --chrome-ink: #ffffff; }
+
+  /* The app. Gets whatever height is left between the two strips. */
+  .app-area { flex: 1 1 auto; min-height: 0; background: #fff; }
+  iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+  /* ---------------------------------------------------- home indicator */
+  .home-strip {
+    flex: 0 0 var(--inset-bottom);
+    background: var(--chrome);
+    display: grid;
+    place-items: center;
+  }
+  .home-strip::after {
+    content: "";
+    width: 140px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--chrome-ink);
+    opacity: .85;
+  }
+
+  /* Dynamic Island, over the status strip. */
+  .island {
+    position: absolute;
+    top: 11px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 125px;
+    height: 36px;
+    background: #000;
+    border-radius: 20px;
+    z-index: 4;
+    pointer-events: none;
+  }
+  .island::after {
+    content: "";
+    position: absolute;
+    right: 11px; top: 50%;
+    transform: translateY(-50%);
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #1b2a3a, #000 65%);
+  }
+
+  /* ---------------------------------------------------------------- hint */
+  /* HIDDEN BY DEFAULT so a recording is clean from the first frame. Press H.
+     Fixed width and nowrap: at a narrow viewport the old version wrapped onto
+     four lines and spilled off the bottom of the page. */
+  .hint {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    white-space: nowrap;
+    font-size: 11.5px;
+    color: rgba(255,255,255,.55);
+    letter-spacing: .3px;
+    text-align: center;
+    line-height: 1.7;
+  }
+  body.show-hint .hint { display: block; }
+  .hint b { color: rgba(255,255,255,.85); font-weight: 600; }
+
+  /* A warning that only appears if the viewport is too narrow to draw the
+     phone properly -- i.e. Device Mode is still on. */
+  .narrow {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: #B7791F;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    z-index: 10;
+  }
+  @media (max-width: 460px) { .narrow { display: block; } }
+</style>
+</head>
+<body class="show-hint">
+
+  <div class="narrow">Device Mode is on — press Cmd/Ctrl + Shift + M to turn it off</div>
+
+  <div class="device">
+    <span class="btn btn-action"></span>
+    <span class="btn btn-up"></span>
+    <span class="btn btn-down"></span>
+    <span class="btn btn-power"></span>
+
+    <div class="screen">
+      <div class="island"></div>
+
+      <div class="status">
+        <span id="clock">9:41</span>
+        <span class="icons">
+          <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor">
+            <rect x="0"  y="8"   width="3" height="4"   rx="1"></rect>
+            <rect x="5"  y="5.5" width="3" height="6.5" rx="1"></rect>
+            <rect x="10" y="3"   width="3" height="9"   rx="1"></rect>
+            <rect x="15" y="0"   width="3" height="12"  rx="1"></rect>
+          </svg>
+          <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor">
+            <path d="M8 11.2 5.9 8.8a3.2 3.2 0 0 1 4.2 0L8 11.2Z"></path>
+            <path d="M8 6.1c-1.5 0-2.9.55-4 1.5L2.7 6.2A8 8 0 0 1 8 4.2c2 0 3.9.75 5.3 2L12 7.6A6 6 0 0 0 8 6.1Z"></path>
+            <path d="M8 1.2c-2.8 0-5.4 1.05-7.3 2.8L0 2.7A12 12 0 0 1 8 0c3 0 5.8 1.05 8 2.7l-1.4 1.3A10.4 10.4 0 0 0 8 1.2Z"></path>
+          </svg>
+          <svg width="26" height="13" viewBox="0 0 26 13" fill="none">
+            <rect x=".5" y=".5" width="22" height="12" rx="3.6"
+                  stroke="currentColor" stroke-opacity=".4"></rect>
+            <rect x="2" y="2" width="17" height="9" rx="2.2" fill="currentColor"></rect>
+            <path d="M24.2 4.4v4.2a2.2 2.2 0 0 0 0-4.2Z" fill="currentColor" fill-opacity=".4"></path>
+          </svg>
+        </span>
+      </div>
+
+      <div class="app-area"><iframe id="app" title="Cha Ghor"></iframe></div>
+
+      <div class="home-strip"></div>
+    </div>
+  </div>
+
+  <p class="hint">
+    <b>H</b> hide this &nbsp;·&nbsp; <b>D</b> dark strips &nbsp;·&nbsp;
+    <b>R</b> reload &nbsp;·&nbsp; <b>C</b> real clock &nbsp;·&nbsp;
+    deep-link with <b>?path=/worker/wages</b>
+  </p>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const path   = params.get("path") || "/";
+  const frame  = document.getElementById("app");
+  frame.src = path.startsWith("/") ? path : "/" + path;
+
+  /* Dark strips can also be set up front: ?chrome=dark */
+  if ((params.get("chrome") || "") === "dark") document.body.classList.add("dark-chrome");
+
+  /* 9:41 is the clock Apple uses in every product shot. C shows the real time. */
+  let realClock = false;
+  const clock = document.getElementById("clock");
+  function tick() {
+    if (!realClock) return;
+    const d = new Date();
+    clock.textContent = (d.getHours() % 12 || 12) + ":" +
+                        String(d.getMinutes()).padStart(2, "0");
+  }
+  setInterval(tick, 1000);
+
+  addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key.toLowerCase()) {
+      case "h": document.body.classList.toggle("show-hint"); break;
+      case "d": document.body.classList.toggle("dark-chrome"); break;
+      case "r": frame.src = frame.src; break;
+      case "c":
+        realClock = !realClock;
+        if (!realClock) clock.textContent = "9:41"; else tick();
+        break;
+    }
+  });
+</script>
+</body>
+</html>
