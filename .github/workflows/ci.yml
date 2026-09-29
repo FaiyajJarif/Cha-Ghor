@@ -23,6 +23,47 @@ jobs:
   backend:
     name: Backend — build and unit tests
     runs-on: ubuntu-latest
+
+    # ChaghorApplicationTests is a @SpringBootTest: it boots the whole
+    # application, so it needs a real database. Without this the job failed
+    # after ~36s on a connection refused to localhost:5433, which reads like a
+    # broken build and is actually a missing service.
+    #
+    # pgvector/pgvector, NOT the stock postgres image: V1__init.sql creates
+    # document_embedding.embedding as VECTOR(1536), and stock postgres has no
+    # such type, so Flyway dies on the first migration.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: chaghor
+          POSTGRES_USER: chaghor
+          POSTGRES_PASSWORD: chaghor_dev_pw
+        ports:
+          - 5432:5432
+        # Without the health check the job races the container and connects
+        # before Postgres is accepting connections.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # 5432 here, not the 5433 used locally: the port clash that 5433 avoids
+      # on a developer laptop does not exist on a clean runner.
+      DB_URL: jdbc:postgresql://localhost:5432/chaghor
+      DB_USERNAME: chaghor
+      DB_PASSWORD: chaghor_dev_pw
+
+      # JwtService refuses to start on the built-in development key unless the
+      # dev profile is active, and demands at least 48 bytes. This value is
+      # throwaway and CI-only -- it signs nothing anyone will ever hold.
+      APP_JWT_SECRET: ci-only-throwaway-secret-not-used-anywhere-real-0123456789
+
+      # Keep CI off the network for anything optional.
+      APP_SMS_ENABLED: "false"
+
     steps:
       - uses: actions/checkout@v4
 
