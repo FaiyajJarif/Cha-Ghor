@@ -38,8 +38,11 @@ import {
   //   - Leave "" to keep the green gradient panel.
   //   - Set a public path to show a real image, e.g. HERO_IMAGE = "/features/hero.jpg"
   //     (put the file in frontend/public/features/).
-  export const HERO_IMAGE = "/features/workforce.png";
-  export const ABOUT_IMAGE = "";
+  // Photographs where we have one (see public/features/ILLUSTRATIONS.md for the
+  // source and licence of each); original SVG illustrations everywhere else, so
+  // no card is ever left showing a bare gradient placeholder.
+  export const HERO_IMAGE = "/features/hero.jpg";
+  export const ABOUT_IMAGE = "/features/about.jpg";
   
   // Headline platform modules — matches the Cha Ghor plan / SRS functional reqs.
   //
@@ -56,37 +59,37 @@ import {
     {
       title: "Workforce & Attendance",
       icon: LuUsers,
-      image: "",
+      image: "/features/workforce.jpg",
       text: "Worker & supervisor profiles, enrollment, and daily bulk attendance that flows straight into payroll.",
     },
     {
       title: "Leaf Collection & Grading",
       icon: LuLeaf,
-      image: "",
+      image: "/features/leaf.jpg",
       text: "Log daily leaf weigh-ins by zone with quality grades — the base for fair, productivity-linked wages.",
     },
     {
       title: "Wage & Payroll",
       icon: LuBanknote,
-      image: "",
+      image: "/features/payroll.jpg",
       text: "Automated hazira + surplus payroll on a Draft → Review → Approved → Paid pipeline, with salary-paid SMS.",
     },
     {
       title: "Fields & Zonal Management",
       icon: LuMap,
-      image: "",
+      image: "/features/fields.jpg",
       text: "Organize garden zones on a map, assign workers and supervisors, and track harvest progress per block.",
     },
     {
       title: "Loans & Advances",
       icon: LuHandCoins,
-      image: "",
+      image: "/features/loans.jpg",
       text: "Interest-free worker loans with an AI credibility check, admin approval, and automatic wage-deduction repayment.",
     },
     {
       title: "Reports & Compliance",
       icon: LuClipboardList,
-      image: "",
+      image: "/features/reports.jpg",
       text: "Dashboards, operational reports and compliance records across every role — audit-ready in one place.",
     },
   ];
@@ -221,7 +224,7 @@ import {
   export const FEATURE_SECTIONS = [
     {
       title: "Workforce Management",
-      image: "/features/workforce.png",
+      image: "/features/workforce.jpg",
       intro:
         "Manage tea-garden workers and supervisors through a centralized directory and enrollment system.",
       ops: [
@@ -234,7 +237,7 @@ import {
     },
     {
       title: "Attendance Tracking",
-      image: "/features/workforce.png",
+      image: "/features/attendance.jpg",
       intro:
         "Record daily worker presence in the field and feed it straight into wage calculation.",
       ops: [
@@ -247,7 +250,7 @@ import {
     },
     {
       title: "Leaf Collection & Grading",
-      image: "",
+      image: "/features/leaf.jpg",
       intro:
         "Track tea-leaf harvesting accurately for productivity monitoring and fair wages.",
       ops: [
@@ -260,7 +263,7 @@ import {
     },
     {
       title: "Wage & Payroll",
-      image: "",
+      image: "/features/payroll.jpg",
       intro:
         "Automate the real Bangladesh tea-estate wage model with a controlled approval pipeline.",
       ops: [
@@ -273,7 +276,7 @@ import {
     },
     {
       title: "Fields & Zonal Management",
-      image: "",
+      image: "/features/fields.jpg",
       intro:
         "Organize garden operations through map-based field and zone management.",
       ops: [
@@ -286,7 +289,7 @@ import {
     },
     {
       title: "Inventory & Requisition",
-      image: "",
+      image: "/features/inventory.jpg",
       intro:
         "Manage operational resources through centralized inventory control.",
       ops: [
@@ -299,7 +302,7 @@ import {
     },
     {
       title: "Supply Chain Management",
-      image: "",
+      image: "/features/supply.jpg",
       intro: "Manage the movement of tea from garden to market efficiently.",
       ops: [
         "Track shipments from garden to market",
@@ -311,7 +314,7 @@ import {
     },
     {
       title: "Finance & Ledger",
-      image: "",
+      image: "/features/finance.jpg",
       intro:
         "Manage financial activity and operational expenses with full transparency.",
       ops: [
@@ -324,7 +327,7 @@ import {
     },
     {
       title: "Loans & Advances",
-      image: "",
+      image: "/features/loans.jpg",
       intro:
         "Interest-free worker loans and salary advances with transparent record keeping.",
       ops: [
@@ -337,7 +340,7 @@ import {
     },
     {
       title: "Weather Monitoring",
-      image: "",
+      image: "/features/weather.jpg",
       intro:
         "Monitor weather to support agricultural planning and field operations.",
       ops: [
@@ -350,7 +353,7 @@ import {
     },
     {
       title: "Alerts & Broadcast",
-      image: "",
+      image: "/features/broadcast.jpg",
       intro:
         "Keep workers and management informed, even offline, via SMS and in-app alerts.",
       ops: [
@@ -363,7 +366,7 @@ import {
     },
     {
       title: "Reports & Compliance",
-      image: "",
+      image: "/features/reports.jpg",
       intro:
         "Generate operational reports and maintain compliance with comprehensive tools.",
       ops: [
@@ -376,7 +379,7 @@ import {
     },
     {
       title: "Cha Bot & AI Intelligence",
-      image: "",
+      image: "/features/chabot.jpg",
       intro:
         "An embedded AI layer across every module — one read-only, RBAC-scoped service.",
       ops: [
