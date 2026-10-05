@@ -44,6 +44,8 @@ as PNG, and place it in the report. Colours follow the application palette:
 | `05-worker-flow.drawio` | Figure 5 — worker console |
 | `06-use-case.drawio` | Figure 6 — use case diagram |
 | `07-er-diagram.drawio` | Figure 17 — entity relationships |
+| `08-ai-routing.drawio` | Figure 18 — AI routing by data sensitivity (§6.4) |
+| `09-leaf-grading-pipeline.drawio` | Figure 19 — leaf grade pipeline and human gate (§13.1) |
 
 ## db/
 
